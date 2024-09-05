@@ -1,0 +1,26 @@
+{
+    "listing_id": "02229b11-8711-43b6-9b31-421c4ea5999c",
+    "asset_name": "CRONOS",
+    "description": "alright seems pretty good almost",
+    "unit_price": 1,
+    "listing_address": "EKc832vN2So3WmU7kYwkNBZAfE1QcsiZdC",
+    "asset_data": {
+        "name": "CRONOS",
+        "amount": 30000000.0,
+        "units": 6,
+        "reissuable": 1,
+        "has_ipfs": 1,
+        "ipfs_hash": "QmTDFZ6Yts6MXH3t6vK66TK8s3ycgxEAnxdw55fo7STjgY"
+    },
+    "remaining_quantity": "2",
+    "tags": [
+        "OG"
+    ],
+    "created_at": "2024-08-23T00:17:22.468626Z",
+    "order_number": "012cf0ab-c57d-4029-ae2b-3bc91c8ad2d1",
+    "order_status": "CONFIRMED",
+    "password_hash": "$2b$12$eoFq.0K7xCIo1dXBzCGrQe0t4CB03zPcRjAEycBNaN3J3bmpXfVJ2",
+    "payout_address": "EZyj3oMoKisrBwd3zaSy4y7wp4paD56K5z",
+    "from_address": "EKc832vN2So3WmU7kYwkNBZAfE1QcsiZdC",
+    "confirmations": 0
+}
