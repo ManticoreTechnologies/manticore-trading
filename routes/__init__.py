@@ -6,5 +6,4 @@ from .check_status import *
 from .search_listings import *
 from .place_order import *
 from .list_invoices import *
-from .flush_invoices import *
 from .get_invoice import *

@@ -161,7 +161,7 @@ def create_listing():
     return jsonify(listing_data), 200
 
 # DISABLE BEFORE PRODUCTION
-@app.route('/flush')
-def flush_redis_db():
-    listing_manager.flush_db()
-    return "Flushed successfully"
+#@app.route('/flush')
+#def flush_redis_db():
+#    listing_manager.flush_db()
+#    return "Flushed successfully"
