@@ -13,7 +13,7 @@ After=network.target
 User={config["Permission"]["user"]}
 Group={config["Permission"]["group"]}
 WorkingDirectory={os.getcwd()}
-ExecStart=gunicorn {'--certfile=' + config['SSL']['certfile'] + ' --keyfile=' + config['SSL']['keyfile'] if config['SSL'].get('enabled', 'false').lower() == 'true' else ''} -w 1 -b {config["General"]["ip"]}:{config["General"]["port"]} startup:app
+ExecStart=gunicorn --certfile={config["SSL"]["certfile"]} --keyfile={config["SSL"]["keyfile"]} -w 1 -b {config["General"]["ip"]}:{config["General"]["port"]} startup:app
 Restart=always
 
 [Install]
