@@ -17,8 +17,18 @@ logger.info(welcome_message)
 
 # Create Flask application
 app = Flask("Manticore Asset Explorer")
-CORS(app, resources={r"/*": {"origins": "*"}})
-
+CORS(app) # Set CORS policy
+# Set the Content Security Policy
+csp = {
+    'default-src': [
+        '\'self\'',
+        'https://cdn.jsdelivr.net',
+    ],
+    'script-src': [
+        '\'self\'',
+        'https://cdn.jsdelivr.net',
+    ]
+}
 # Initialize the RedisListingManager
 listing_manager = RedisListingManager(redis.Redis(host='localhost', port=6379, db=6))
 
@@ -365,7 +375,7 @@ if __name__ == "__main__":
     while True:
         process_listings()
         logger.debug("Sleeping for 60 seconds before next cycle.")
-        time.sleep(3)
+        time.sleep(12)
 
 else:
     logger.info("Starting the Flask app under gunicorn")
