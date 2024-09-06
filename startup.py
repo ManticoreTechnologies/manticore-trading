@@ -299,11 +299,11 @@ def fulfill_order(order, listing_address, listing_id, order_key):
     # Define the total evrmore available
     total_satoshis = sum(mempool['satoshis'] for mempool in order_mempool)
 
-    # Define the invoice amount (total buyer paid including the 5% fee)
+    # Define the invoice amount (total buyer paid including the 0.5% fee)
     invoice_satoshis = order['payment_amount']
 
-    # Calcualte the 5% fee 
-    fee_satoshis = round(invoice_satoshis * 0.05)
+    # Calcualte the 0.5% fee 
+    fee_satoshis = round(invoice_satoshis * 0.005)
 
     # Calculate payouts 
     seller_payout = invoice_satoshis - fee_satoshis - fee_satoshis

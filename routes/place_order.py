@@ -137,7 +137,7 @@ def place_order():
     # Calculate the payment amount
     unit_price = float(listing_data['unit_price'])
     payment_amount = (unit_price * quantity) / 100000000
-    fee = payment_amount * 0.05  # Calculate the 5% fee
+    fee = payment_amount * 0.005  # Calculate the 0.5% fee
     total_payment_amount = payment_amount + fee  # Add the fee to the payment amount
     logger.debug(f"Calculated payment amount: {payment_amount}, Fee: {fee}, Total Payment Amount: {total_payment_amount}")
 
