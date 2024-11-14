@@ -22,14 +22,16 @@ def create_orders_table():
         expiration_time REAL, 
         payment_amount REAL,
         fee REAL,
-        mempool TEXT,
-        fulfillment_txid TEXT
+        mempool TEXT DEFAULT "[]",
+        fulfillment_txid TEXT,
+        refund_txid TEXT
     )
     ''')
 
     conn.commit()
     conn.close()
 
+create_orders_table()
 
 """ Add an order to the database 
     Returns the id of the order if successful, None otherwise
@@ -190,6 +192,32 @@ def get_order_mempool(order_id):
     cursor = conn.cursor()
     cursor.execute("SELECT mempool FROM orders WHERE id = ?", (order_id,))
     return json.loads(cursor.fetchone()[0])
+""" update the fulfillment txids of an order """
+def update_order_fulfillment_txid(order_id, asset_txid):
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET fulfillment_txid = ? WHERE id = ?", (asset_txid, order_id))
+    conn.commit()
+    conn.close()
+""" Get the fulfillment txids of an order """
+def get_order_fulfillment_txid(order_id):
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT fulfillment_txid FROM orders WHERE id = ?", (order_id,))
+    return cursor.fetchone()[0]
+
+def update_order_refund_txid(order_id, refund_txid):
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET refund_txid = ? WHERE id = ?", (refund_txid, order_id))
+    conn.commit()
+    conn.close()
+
+def get_order_refund_txid(order_id):
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT refund_txid FROM orders WHERE id = ?", (order_id,))
+    return cursor.fetchone()[0]
 
 if __name__ == "__main__":
     #create_orders_table()
