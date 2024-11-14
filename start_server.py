@@ -17,7 +17,7 @@
 from helper import settings, create_logger
 
 # Create the logger
-logger = create_logger()
+logger = create_logger(settings['Logging']['log_level'])
 
 # Import Flask
 from flask import Flask, jsonify

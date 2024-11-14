@@ -70,7 +70,7 @@ from settings import gather_settings
 settings = gather_settings(settings_file, logger)
 
 # Remake the logger to use the new log file
-logger = create_logger()
+logger = create_logger(settings['Logging']['log_level'])
 
 """ Welcome message """
 def welcome_message():

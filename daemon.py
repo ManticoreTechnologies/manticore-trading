@@ -1,10 +1,11 @@
 import json
-from helper import logger, settings
+from helper import settings, create_logger
 import time
 import Database.Listings
 import Database.Orders
 from rpc import check_evr_confirming, get_address_mempool, send_command, get_asset_balance, check_asset_confirming
 
+logger = create_logger(settings['Logging']['log_level'])
 
 """ Process listings and update the status of the listings 
     This is the main function that processes the listings
