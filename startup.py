@@ -1,92 +1,11 @@
 # Import utilities
-from utils import create_logger, welcome_message, config
 import json
-from flask import Flask
-from flask_cors import CORS
-from RedisListingManager import RedisListingManager
-import redis
+from helper import logger
 import time
+import Database.Orders
+import Database.Listings
 from rpc import send_command
 
-
-# Initialize logging
-logger = create_logger()
-
-# Print the welcome message
-logger.info(welcome_message)
-
-# Create Flask application
-app = Flask("Manticore Asset Explorer")
-CORS(app) # Set CORS policy
-# Set the Content Security Policy
-csp = {
-    'default-src': [
-        '\'self\'',
-        'https://cdn.jsdelivr.net',
-    ],
-    'script-src': [
-        '\'self\'',
-        'https://cdn.jsdelivr.net',
-    ]
-}
-# Initialize the RedisListingManager
-listing_manager = RedisListingManager(redis.Redis(host='localhost', port=6379, db=6))
-
-# Redis client setup
-redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
-
-def expire_orders():
-    """
-    Expire orders that haven't been paid within the reservation window.
-    """
-    logger.debug("Checking for expired orders.")
-    
-    current_time = time.time()
-    order_keys = redis_client.keys("order:*")
-
-    for key in order_keys:
-        order = json.loads(redis_client.get(key))
-        if order['status'] == 'PENDING' and order['expiration_time'] < current_time:
-            expire_order(order['order_id'])
-
-
-def expire_order(order_id):
-    """
-    Manually expire a specific order by its order_id. Can be called by the API or internally.
-    """
-    logger.debug(f"Received request to manually expire order {order_id}.")
-
-    # Fetch the order from Redis
-    order_key = f"order:{order_id}"
-    order = redis_client.get(order_key)
-    
-    if not order:
-        logger.warning(f"Order {order_id} not found.")
-        return "Order not found."
-
-    order = json.loads(order)
-    
-    if order['status'] != 'PENDING':
-        logger.warning(f"Order {order_id} is not in a pending state and cannot be expired.")
-        return "Order is not in a pending state and cannot be expired."
-
-    # Add the quantity back to the listing's remaining quantity
-    listing_id = order['listing_id']
-    quantity = order['quantity']
-
-    listing_data = listing_manager.get_listing(listing_id)
-    if listing_data:
-        # Convert the remaining_quantity to a float to ensure numeric operation
-        new_quantity = float(listing_data['remaining_quantity']) + quantity
-        new_on_hold = float(listing_data.get('on_hold', 0)) - quantity
-        listing_manager.update_listing_field(listing_id, "remaining_quantity", new_quantity)
-        listing_manager.update_listing_field(listing_id, "on_hold", max(new_on_hold, 0))
-        logger.debug(f"Manually expired order {order_id}. Added {quantity} back to listing {listing_id}. New remaining quantity: {new_quantity}. On hold: {max(new_on_hold, 0)}")
-    
-    redis_client.delete(order_key)  # Expire the order
-    logger.debug(f"Order {order_id} manually expired and removed from Redis.")
-    
-    return f"Order {order_id} manually expired."
 
 def process_listings():
     """
@@ -96,10 +15,10 @@ def process_listings():
     logger.debug("|-------- Processing All Listings --------|")
 
     # Expire any pending orders before processing listings
-    expire_orders()
+    Database.Orders.check_all_expired()
 
     # Retrieve all listings currently in the system
-    listings = listing_manager.list_listings(sort_by='created_at')
+    listings = Database.Listings.get_all_listings(sort_by='created_at')
     
     # Loop through all the listings
     for listing in listings:
@@ -379,4 +298,4 @@ if __name__ == "__main__":
 
 else:
     logger.info("Starting the Flask app under gunicorn")
-    import routes
+    import __routes

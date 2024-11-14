@@ -1,6 +1,21 @@
 
 # Manticore Trading Service
 
+
+#### Data for ai to rewrite readme ####
+Entrypoint: run.py
+Start command: python run.py 
+
+This entry runs gunicorn with the config file gunicorn_config.py
+settings.conf is the configuration file for the application
+
+Node username and password are required to be set in .env
+
+
+#######################################
+
+
+
 ## Overview
 
 **Manticore Trading Service** is a Python-based application that serves as a dual-service system. The primary function is to mirror assets from IPFS for quick access, while the secondary service continuously monitors for new assets and automatically downloads associated images.

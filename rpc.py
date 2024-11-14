@@ -4,16 +4,16 @@
 #       rpc.py 
 
 import requests
-from utils import create_logger, config
+from helper import create_logger, settings
 
 
 # Initialize the logger
 logger = create_logger()
 
 # Configuration settings for connecting to the Evrmore node
-host = config["Node"]["host"]
-url = f'http://{host}:{config["Node"]["port"]}'
-auth = (config["Node"]["user"], config["Node"]["password"])
+host = settings["Node"]["host"]
+url = f'http://{host}:{settings["Node"]["port"]}'
+auth = (settings["Node"]["username"], settings["Node"]["password"])
 
 class AuthenticationError(Exception):
     """Custom exception for handling authentication errors."""
@@ -35,7 +35,6 @@ def send_command(command, params=[]):
         requests.HTTPError: If there is a connection error with the Evrmore node.
     """
     try:
-        logger.debug(f'Sending command: "{command}" to host: {host} with params: {params}')
         
         # Prepare the JSON-RPC payload and headers
         payload = {"jsonrpc": "2.0", "id": "curltext", "method": command, "params": params}
@@ -60,11 +59,54 @@ def send_command(command, params=[]):
         else:
             # Log the length of the result and return it
             result = response_json.get('result')
-            if result is not None:
-                logger.debug(f"Node replied with result of length {len(str(result))}")
             return result
     
     except requests.ConnectionError as connection_error:
         # Handle connection errors with the Evrmore node
         logger.critical(f"Unable to connect to Evrmore node at {url}. Is the node running?")
         raise requests.HTTPError(f"Unable to connect to Evrmore node at {url}. Is the node running?") from connection_error
+
+def test_connection():
+    """ Test the connection to the Evrmore node """
+    try:
+        send_command('getblockchaininfo', [])
+        return True
+    except Exception as e:
+        return False
+    
+
+
+
+def get_address_balances(address):
+    """ Get the balances of an address """
+    balances = send_command("getaddressbalance", [{"addresses": [address]}, True])
+    return balances
+
+def get_asset_balance(address, assetName):
+    """ Get the balance of an asset """
+    balances = get_address_balances(address)
+    for balance in balances:
+        if balance['assetName'] == assetName:
+            return balance['balance']
+    return 0
+
+def get_address_mempool(address, assets=True):
+    """ Get the mempool of an address """
+    mempool = send_command("getaddressmempool", [{"addresses": [address]}, assets])
+    return mempool
+
+def check_asset_confirming(address, assetName):
+    """ Check if an asset is in the mempool for an address """
+    mempool_info = get_address_mempool(address)
+    for tx in mempool_info:
+        if assetName == tx["assetName"]:
+            return True
+    return False
+
+def check_evr_confirming(address):
+    """ Check if an evr is in the mempool for an address """
+    mempool_info = get_address_mempool(address, assets=False)
+    logger.debug(f"Mempool info: {mempool_info}")
+    if len(mempool_info) > 0:
+        return True
+    return False
