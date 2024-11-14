@@ -221,7 +221,13 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
     """ Total up the seller fees to send to the fee address """
     seller_fees = 0
     total_seller_payouts = 0
-    buyer_asset_payouts = []
+    buyer_asset_payouts = {
+        order["payout_address"]: {
+            "transfer": {
+
+            }
+        }
+    }
     seller_payouts = []
 
     seller_outputs = []
@@ -252,14 +258,9 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
         seller_outputs.append(seller_payout_output)
 
         """ Generate the buyer listing payout output """
-        buyer_listing_payout_output = {
-            listing["payout_address"]: {
-                "transfer": {
-                    listing["asset_name"]: quantity/100000000
-                }
-            },
-        }
-        buyer_asset_payouts.append(buyer_listing_payout_output)
+        logger.debug(f"Generating buyer listing payout output for {listing['asset_name']} with quantity {quantity}")
+        buyer_asset_payouts[order["payout_address"]]["transfer"][listing["asset_name"]] = quantity/100000000
+        logger.debug(f"Buyer asset payouts: {buyer_asset_payouts}")
 
 
     """ Create the buyer refund output """
@@ -293,8 +294,8 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
     logger.info(f"Buyer refund = {buyer_refund}")
     logger.info(f"Buyer fee = {buyer_fee}")
     logger.info(f"{buyer_refund_output} REFUND")
-    for i in range(len(listing_ids)):
-        logger.info(f"{buyer_asset_payouts[i]} PURCHASED")
+    for i in buyer_asset_payouts[order["payout_address"]]["transfer"]:
+        logger.info(f"{buyer_asset_payouts[order['payout_address']]['transfer'][i]} PURCHASED")
 
     logger.warning(  "-------- Seller --------")
     for i in range(len(listing_ids)):
@@ -345,18 +346,18 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
         each listing will have a utxo 
     """
 
-    """ Get the listing UTXOs! :) """
-    listing_utxos = send_command("getaddressutxos", [{"addresses": [listing["listing_address"]], "assetName": listing["asset_name"]} for listing in listings])
-
-    """ Convert the listing UTXOs to the format we need """
-    listing_utxos = [{"txid": utxo['txid'], "vout": utxo['outputIndex'], "satoshis": utxo['satoshis'], "assetName": utxo['assetName'], "address": utxo['address']} for utxo in listing_utxos]
-    
-    """ Filter them so that we have a list of utxos for each listing matching the listing address"""
-    listing_utxos = [utxo for utxo in listing_utxos if utxo['address'] in [listing['listing_address'] for listing in listings]]
 
     """ Now we go through each listing and sum the utxo satoshis for the asset name """
     listing_outputs = []
+    all_listing_utxos = []
     for listing in listings:
+
+        """ Get the listing UTXOs! :) """
+        listing_utxos = send_command("getaddressutxos", [{"addresses": [listing["listing_address"]], "assetName": listing["asset_name"]}])
+
+        """ Convert the listing UTXOs to the format we need """
+        listing_utxos = [{"txid": utxo['txid'], "vout": utxo['outputIndex'], "satoshis": utxo['satoshis'], "assetName": utxo['assetName'], "address": utxo['address']} for utxo in listing_utxos]
+        all_listing_utxos.extend(listing_utxos)
         """ Sum the utxo satoshis for the asset name """
         listing_satoshis = sum(utxo['satoshis'] for utxo in listing_utxos if utxo['assetName'] == listing['asset_name'])
         logger.debug(f"Sum of {listing['asset_name']} satoshis for {listing['listing_address']}: {listing_satoshis}")
@@ -377,20 +378,17 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
         logger.debug(f"Change output for {listing['asset_name']} sent back to {listing['listing_address']}: {change_output}")
         listing_outputs.append(change_output)
 
-    """ Combine the buyer asset payouts into a single dict """
-    combined_buyer_asset_payouts = {k: v for d in buyer_asset_payouts for k, v in d.items()}
-    logger.debug(f"Combined buyer asset payouts: {combined_buyer_asset_payouts}")
 
     """ Combine the listing change outputs into a single dict """
     combined_listing_outputs = {k: v for d in listing_outputs for k, v in d.items()}
     logger.debug(f"Combined listing change outputs: {combined_listing_outputs}")
 
     """ Combine the buyer asset payouts and the listing change outputs into a single dict """
-    combined_asset_outputs = {**combined_buyer_asset_payouts, **combined_listing_outputs}
+    combined_asset_outputs = {**buyer_asset_payouts, **combined_listing_outputs}
     logger.debug(f"Combined asset outputs: {combined_asset_outputs}")
 
     """ Create the asset raw transaction """
-    asset_raw_tx = send_command("createrawtransaction", [listing_utxos, combined_asset_outputs])
+    asset_raw_tx = send_command("createrawtransaction", [all_listing_utxos, combined_asset_outputs])
     logger.debug(f"Asset raw transaction: {asset_raw_tx}")
 
     """ We now have two raw transaction, one for the evrmore payments and one for the asset payouts
@@ -499,7 +497,7 @@ def start_daemon():
     logger.info("Daemon started")
 
     while True:
-
+        process_listings()
         """ Process orders """
 
         """ The overview for order processing is as follows:
