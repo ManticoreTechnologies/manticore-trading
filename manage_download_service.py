@@ -1,6 +1,6 @@
 import os
 import subprocess
-from utils import config
+from helper import settings
 
 SERVICE_NAME = "manticore-trading-daemon"
 SERVICE_FILE = f"/etc/systemd/system/{SERVICE_NAME}.service"
@@ -10,10 +10,10 @@ Description=Manticore Trading Daemon Service
 After=network.target
 
 [Service]
-User={config["Permission"]["user"]}
-Group={config["Permission"]["group"]}
+User=root
+Group=root
 WorkingDirectory={os.getcwd()}
-ExecStart=python3 startup.py
+ExecStart=python3 run.py daemon
 Restart=always
 
 [Install]

@@ -1,6 +1,6 @@
 import os
 import subprocess
-from utils import config
+from helper import settings
 
 SERVICE_NAME = "manticore-trading"
 SERVICE_FILE = f"/etc/systemd/system/{SERVICE_NAME}.service"
@@ -10,10 +10,10 @@ Description=Manticore Trading Flask Service
 After=network.target
 
 [Service]
-User={config["Permission"]["user"]}
-Group={config["Permission"]["group"]}
+User=root
+Group=root
 WorkingDirectory={os.getcwd()}
-ExecStart=gunicorn --certfile={config["SSL"]["certfile"]} --keyfile={config["SSL"]["keyfile"]} -w 1 -b {config["General"]["ip"]}:{config["General"]["port"]} startup:app
+ExecStart=python3 run.py server
 Restart=always
 
 [Install]
