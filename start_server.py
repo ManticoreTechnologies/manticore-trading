@@ -38,9 +38,19 @@ from routes import *
 
 # Run the Flask app (if this is the main module, this is for development)
 if __name__ == "__main__":
-    logger.info("Server listening on %s:%s", settings['Server']['ip'], settings['Server']['port'])
-    server.run(host=settings['Server']['ip'], port=settings['Server']['port'])
+    try:
+        logger.info("Using development port %s", settings['Server']['dev_port'])
+        port = settings['Server']['dev_port']   
+    except KeyError:
+        port = settings['Server']['port']
+    logger.info("Server listening on %s:%s", settings['Server']['ip'], port)
+    server.run(host=settings['Server']['ip'], port=port)
 else:
     import os
-    logger.info("Worker listening on %s:%s | PID %s", settings['Server']['ip'], settings['Server']['port'], str(os.getpid()))
+    try:
+        logger.info("Using development port %s", settings['Server']['dev_port'])
+        port = settings['Server']['dev_port']   
+    except KeyError:
+        port = settings['Server']['port']
+    logger.info("Worker listening on %s:%s | PID %s", settings['Server']['ip'], port, str(os.getpid()))
 

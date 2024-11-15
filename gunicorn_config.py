@@ -13,6 +13,10 @@ accesslog = '-'
 capture_output = True
 
 # Set default IP and worker numbers for Gunicorn
-bind = settings['Server']['ip'] + ':' + settings['Server']['port']
-workers = settings['Server']['workers']
+try:
+    port = settings['Server']['dev_port']
+except KeyError:
+    port = settings['Server']['port']
 
+bind = settings['Server']['ip'] + ':' + port
+workers = settings['Server']['workers']
