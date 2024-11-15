@@ -224,6 +224,24 @@ def get_listing_status(listing_id):
     cursor.execute("SELECT listing_status FROM listings WHERE id = ?", (listing_id,))
     return cursor.fetchone()[0]
 
+
+
+""" Increment the sold amount of a listing """
+def increment_listing_sold(listing_id, amount):
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE listings SET sold = sold + ? WHERE id = ?", (amount, listing_id))
+    conn.commit()
+    conn.close()
+
+""" Decrement the sold amount of a listing """
+def decrement_listing_sold(listing_id, amount):
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE listings SET sold = sold - ? WHERE id = ?", (amount, listing_id))
+    conn.commit()
+    conn.close()
+
 """ Add more methods for filtering listings by tags, price, etc. """
 
 

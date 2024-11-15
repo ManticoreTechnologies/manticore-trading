@@ -491,6 +491,10 @@ def fullfill_order(order_id, listing_ids, quantities):
     """ Return true if we successfully broadcasted the transactions 
     """
 
+    """ Update the listings with the sold amount """
+    for i in range(len(listing_ids)):
+        Database.Listings.increment_listing_sold(listing_ids[i], quantities[i])
+
     return True
 
 def start_daemon():
