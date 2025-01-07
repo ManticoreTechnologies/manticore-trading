@@ -402,7 +402,7 @@ def create_payout_transactions(order_id, listing_ids, quantities, fee_percentage
     return evrmore_raw_tx, asset_raw_tx
 
 def fund_raw_transaction(raw_tx):
-    return send_command("fundrawtransaction", [raw_tx, {"feeRate": 0.01}])['hex']
+    return send_command("fundrawtransaction", [raw_tx])['hex']
 
 def sign_raw_transaction(raw_tx):
     return send_command("signrawtransaction", [raw_tx])['hex']

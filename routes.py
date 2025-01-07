@@ -11,6 +11,12 @@ from flask import jsonify, request
 import Database.Listings
 import Database.Orders
 
+if "ipfs_hash" not in Database.Listings.get_all_columns():
+    logger.debug("Adding ipfs_hash column to the database")
+    Database.Listings.add_ipfs_hash_column()
+
+
+
 def calculate_payment_amount(listing_id, quantity):
 
     listing_data = Database.Listings.get_listing(listing_id)
@@ -299,7 +305,10 @@ def manage_listing():
     Manage a listing by providing the listing ID, password, and action.
     Possible actions include canceling the listing, updating the price, description, or quantity,
     and refunding the surplus.
-    """
+    """     
+
+    """ TODO: Add support for updating the IPFS hash """
+
     logger.debug("Received request to manage listing.")
 
     # Get the post body
@@ -352,6 +361,11 @@ def manage_listing():
             new_status = data['listing_status']
             Database.Listings.update_listing_status(listing_id, new_status)
             logger.debug(f"Updated listing status: {new_status}")
+
+        if 'ipfs_hash' in data:
+            new_ipfs_hash = data['ipfs_hash']
+            Database.Listings.update_listing_ipfs_hash(listing_id, new_ipfs_hash)
+            logger.debug(f"Updated IPFS hash: {new_ipfs_hash}")
 
         return jsonify({"message": "Listing updated successfully."}), 200
 

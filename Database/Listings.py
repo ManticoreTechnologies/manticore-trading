@@ -2,6 +2,9 @@ import json
 from helper import logger
 import sqlite3
 
+
+""" TODO: Add support for updating the IPFS hash """
+
 def create_listings_table():
     conn = sqlite3.connect('listings.db')
     cursor = conn.cursor()
@@ -12,6 +15,7 @@ def create_listings_table():
         unit_price REAL,
         description TEXT,
         listing_address TEXT,
+        ipfs_hash TEXT,
         created_at TEXT,
         sold REAL,
         password_hash TEXT,
@@ -36,6 +40,19 @@ def add_refund_txid_column():
     cursor.execute("ALTER TABLE listings ADD COLUMN refund_txid TEXT")
     conn.commit()
     conn.close()
+
+def add_ipfs_hash_column():
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("ALTER TABLE listings ADD COLUMN ipfs_hash TEXT")
+    conn.commit()
+    conn.close()
+
+def get_all_columns():
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(listings)")
+    return [column[1] for column in cursor.fetchall()]
 
 def preload_listings():
     conn = sqlite3.connect('listings.db')
@@ -203,6 +220,14 @@ def update_listing_refund_txid(listing_id, refund_txid):
     conn.commit()
     conn.close()    
 
+""" Update the IPFS hash of a listing """
+def update_listing_ipfs_hash(listing_id, ipfs_hash):
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE listings SET ipfs_hash = ? WHERE id = ?", (ipfs_hash, listing_id))
+    conn.commit()
+    conn.close()
+
 """ Update the remaining quantity of a listing """
 def update_listing_remaining_quantity(listing_id, remaining_quantity):
     conn = sqlite3.connect('listings.db')
@@ -247,4 +272,4 @@ def decrement_listing_sold(listing_id, amount):
 
 if __name__ == "__main__":
     #add_refund_txid_column()
-    print(get_all_listings())
+    add_ipfs_hash_column()
