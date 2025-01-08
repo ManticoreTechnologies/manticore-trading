@@ -44,7 +44,10 @@ def calculate_payment_amount(listing_id, quantity):
 """ Get all the listings """
 @server.route('/listings', methods=['GET'])
 def listings():
-    return jsonify(Database.Listings.get_all_listings()), 200
+    listings = Database.Listings.get_all_listings()
+    for listing in listings:
+            print(listing)
+    return jsonify(listings), 200
 
 """ Place an order """
 @server.route('/place_order', methods=['POST'])
@@ -420,7 +423,7 @@ def get_listing(listing_id):
     logger.debug(f"Received request to retrieve listing {listing_id}")
     # Use the RedisListingManager to retrieve the listing data
     listing_data = Database.Listings.get_listing(listing_id)
-    
+    print(listing_data)
     # If the listing doesn't exist, return a 404 error
     if not listing_data:
         return jsonify({"error": "Listing not found"}, 404)

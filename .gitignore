@@ -1,2 +1,4 @@
 .env
 .venv
+listings.db
+orders.db

@@ -70,7 +70,7 @@ def preload_listings():
         except:
             on_hold = 0
 
-        cursor.execute("INSERT INTO listings (id, unit_price, description, listing_address, created_at, sold, password_hash, payout_address, tags, asset_data, asset_name, on_hold, remaining_quantity, listing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (listing['listing_id'], listing['unit_price'], listing['description'], listing['listing_address'], listing['created_at'], sold, listing['password_hash'], listing['payout_address'], listing['tags'], listing['asset_data'], listing['asset_name'], on_hold, listing['remaining_quantity'], listing['listing_status']))
+        cursor.execute("INSERT INTO listings (id, unit_price, description, listing_address, created_at, sold, password_hash, payout_address, tags, asset_data, asset_name, on_hold, remaining_quantity, listing_status, ipfs_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (listing['listing_id'], listing['unit_price'], listing['description'], listing['listing_address'], listing['created_at'], sold, listing['password_hash'], listing['payout_address'], listing['tags'], listing['asset_data'], listing['asset_name'], on_hold, listing['remaining_quantity'], listing['listing_status'], listing['ipfs_hash']))
     conn.commit()
     conn.close()
 
@@ -78,14 +78,17 @@ def preload_listings():
 def add_listing(listing):
     conn = sqlite3.connect('listings.db')
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO listings (id, unit_price, description, listing_address, created_at, sold, password_hash, payout_address, tags, asset_data, asset_name, on_hold, remaining_quantity, listing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (listing['listing_id'], listing['unit_price'], listing['description'], listing['listing_address'], listing['created_at'], 0, listing['password_hash'], listing['payout_address'], listing['tags'], listing['asset_data'], listing['asset_name'], 0, listing['remaining_quantity'], listing['listing_status']))
+    cursor.execute("INSERT INTO listings (id, unit_price, description, listing_address, created_at, sold, password_hash, payout_address, tags, asset_data, asset_name, on_hold, remaining_quantity, listing_status, ipfs_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (listing['listing_id'], listing['unit_price'], listing['description'], listing['listing_address'], listing['created_at'], 0, listing['password_hash'], listing['payout_address'], listing['tags'], listing['asset_data'], listing['asset_name'], 0, listing['remaining_quantity'], listing['listing_status'], listing['ipfs_hash']))
     conn.commit()
     conn.close()
 
 
 """ Convert a listing to a dictionary """
+""" TODO For some reason ipfs_hash is null for all listings, need to fix """
 def listing_to_dict(listing):
-    columns = ["id", "unit_price", "description", "listing_address", "created_at", "sold", "password_hash", "payout_address", "tags", "asset_data", "asset_name", "on_hold", "remaining_quantity", "listing_status"]
+    if listing[10] == "INFERNA":
+        print(listing)
+    columns = ["id", "unit_price", "description", "listing_address", "created_at", "sold", "password_hash", "payout_address", "tags", "asset_data", "asset_name", "on_hold", "remaining_quantity", "listing_status", "refund_txid", "ipfs_hash"]
     return {columns[i]: listing[i] for i in range(len(columns))}
 
 """ Retrieves a listing from the database by listing_id """
