@@ -430,3 +430,12 @@ def get_listing(listing_id):
     
     # Return the listing data with a success status
     return jsonify(listing_data), 200
+
+
+@server.route('/search', methods=['GET'])
+def search_listings():
+    """ Search listings by any column """
+    column = request.args.get('column') or "asset_name"
+    value = request.args.get('value') or ""
+    listings = Database.Listings.search_listings(column, value)
+    return jsonify(listings), 200

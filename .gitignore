@@ -1,4 +1,4 @@
 .env
 .venv
-listings.db
-orders.db
+./listings.db
+./orders.db

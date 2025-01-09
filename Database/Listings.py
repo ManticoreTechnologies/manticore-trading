@@ -270,6 +270,28 @@ def decrement_listing_sold(listing_id, amount):
     conn.commit()
     conn.close()
 
+
+""" Search listings by any column or all columns """
+def search_listings(column, value):
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    
+    if column == 'all':
+        # Get all column names
+        cursor.execute("PRAGMA table_info(listings)")
+        columns = [info[1] for info in cursor.fetchall()]
+        
+        # Construct a query that checks each column
+        query = "SELECT * FROM listings WHERE " + " OR ".join([f"{col} LIKE ?" for col in columns])
+        params = tuple('%' + value + '%' for _ in columns)
+    else:
+        # Search a specific column
+        query = f"SELECT * FROM listings WHERE {column} LIKE ?"
+        params = ('%' + value + '%',)
+    
+    cursor.execute(query, params)
+    return [listing_to_dict(listing) for listing in cursor.fetchall()]
+
 """ Add more methods for filtering listings by tags, price, etc. """
 
 
