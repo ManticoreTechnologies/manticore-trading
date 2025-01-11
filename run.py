@@ -10,7 +10,7 @@ def main():
     if mode == "server":
         os.system("gunicorn -c gunicorn_config.py start_server:server")
     elif mode == "daemon":
-        os.system("python start_daemon.py")
+        os.system("python3 start_daemon.py")
 
 if __name__ == "__main__":
     main()

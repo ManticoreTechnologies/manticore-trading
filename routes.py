@@ -177,8 +177,9 @@ def create_listing():
     if not asset_name: 
         return jsonify("Parameter `name` was not provided in the body. Please provide a valid `name` of an asset.", 400)
     
-    # Convert the asset name into uppercase
-    asset_name = asset_name.upper()
+    # Convert the asset name into uppercase, preserving special characters
+    asset_name = ''.join(c.upper() if c.isalnum() else c for c in asset_name)
+    print("Received asset name: ", asset_name)
     
     # B. Asset Description
     # Get the listing description (defaults to '')
@@ -239,13 +240,12 @@ def create_listing():
     # Retrieve asset data
     try:
         asset_data = send_command("getassetdata", [asset_name])
+        if asset_data is None:
+            logger.warning(f"Asset {asset_name} not found in the blockchain.")
+            return jsonify({"error": f"Asset {asset_name} not found in the blockchain. Please verify the asset name is correct."}), 404
     except Exception as e:
-        logger.error(e)
-        return jsonify({"error": f'{e}'})
-
-    # Validate asset exists
-    if asset_data is None:
-        return jsonify({"error": "Invalid asset name"}), 400
+        logger.error(f"Error retrieving asset data for {asset_name}: {str(e)}")
+        return jsonify({"error": f"Error retrieving asset data: {str(e)}"}), 400
 
     # B. Listing ID
     # Generate a unique listing ID
@@ -290,6 +290,8 @@ def create_listing():
         # These shall be the only two states for a listing
         # The status of the listing shall be checked using zmq or 30second interval then updated
         
+        # Initialize IPFS hash as None until it's set
+        'ipfs_hash': None
     }
 
     # Save the listing using the RedisListingManager

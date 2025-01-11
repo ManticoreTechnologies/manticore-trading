@@ -82,8 +82,8 @@ welcome_message()
 
 """ Log level message """
 def log_level_message():
-    log_level = settings['Logging']['log_level']
-    log_message = f"Logger initialized with {log_level.lower()} level {log_level}"
+    log_level = settings['Logging']['log_level'] or 'DEBUG'
+    log_message = "Logger initialized with {} level {}".format(log_level.lower(), log_level)
     
     if log_level == 'DEBUG':
         logger.debug(log_message)
