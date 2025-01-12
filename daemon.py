@@ -61,7 +61,13 @@ def process_listings():
         Database.Listings.update_listing_balance(listing['id'], balance)
 
         """ Step 1. Check if listing status is valid """
-        
+        if listing['listing_status'] == "ERROR":
+            """ 2.e. ERROR """
+            logger.error(f"Listing {listing['id']} is in ERROR state. Cancelling all orders for this listing.")
+            Database.Orders.expire_all_orders(listing['id'])
+            Database.Listings.clear_all_holds(listing['id'])
+            Database.Listings.update_listing_status(listing['id'], "INACTIVE")
+            continue
         if listing['listing_status'] not in ["INACTIVE", "CONFIRMING", "ACTIVE", "REFUNDING", "CANCELED", "ARCHIVED", "ERROR"]:
             logger.warning(f"Invalid listing status {listing['listing_status']} for listing {listing['id']}. Skipping...")
             continue # Just warn for now, the listing just ever be processed
@@ -121,13 +127,7 @@ def process_listings():
                 """ 2.d.i. If the refund tx has more than 0 confirmations, the listing is INACTIVE """
                 Database.Listings.update_listing_status(listing['id'], "INACTIVE")
                 logger.debug(f"Refund for listing {listing['id']} is now complete. Setting to INACTIVE.")
-        elif listing['listing_status'] == "ERROR":
-            """ 2.e. ERROR """
-            logger.error(f"Listing {listing['id']} is in ERROR state. Cancelling all orders for this listing.")
-            Database.Orders.expire_all_orders(listing['id'])
-            Database.Listings.clear_all_holds(listing['id'])
-            Database.Listings.update_listing_status(listing['id'], "INACTIVE")
-        
+
         elif listing['listing_status'] == "CANCELED":
             """ 2.e. CANCELED """
             Database.Listings.update_listing_status(listing['id'], "ARCHIVED")
