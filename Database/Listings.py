@@ -112,6 +112,12 @@ def get_all_listings():
     cursor.execute("SELECT * FROM listings")
     return [listing_to_dict(listing) for listing in cursor.fetchall()]
 
+def get_all_non_archived_listings():
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM listings WHERE listing_status != 'ARCHIVED'")
+    return [listing_to_dict(listing) for listing in cursor.fetchall()]
+
 """ Add satoshis to on_hold """
 def place_hold(listing_id, satoshis):
     """ Place satoshis on hold for a listing 
@@ -173,6 +179,13 @@ def remove_hold(listing_id, satoshis):
     conn.commit()
     conn.close()
     return True
+
+def clear_all_holds(listing_id):
+    conn = sqlite3.connect('listings.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE listings SET on_hold = 0 WHERE id = ?", (listing_id,))
+    conn.commit()
+    conn.close()
 
 
 """ Update the balance of a listing """
@@ -282,7 +295,8 @@ def search_listings(column, value):
         columns = [info[1] for info in cursor.fetchall()]
         
         # Construct a query that checks each column
-        query = "SELECT * FROM listings WHERE " + " OR ".join([f"{col} LIKE ?" for col in columns])
+        # DONT INCLUDE ARCHIVED LISTINGS
+        query = "SELECT * FROM listings WHERE listing_status != 'ARCHIVED' AND " + " OR ".join([f"{col} LIKE ?" for col in columns])
         params = tuple('%' + value + '%' for _ in columns)
     else:
         # Search a specific column

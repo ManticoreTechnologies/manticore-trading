@@ -219,6 +219,13 @@ def get_order_refund_txid(order_id):
     cursor.execute("SELECT refund_txid FROM orders WHERE id = ?", (order_id,))
     return cursor.fetchone()[0]
 
+def expire_all_orders(listing_id):
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET status = 'EXPIRED' WHERE listing_id = ?", (listing_id,))
+    conn.commit()
+    conn.close()
+
 if __name__ == "__main__":
     #create_orders_table()
     id = add_order("e2cdfcfd-3d30-433d-99e7-2d54aad9d09b", 1, "bc1q234567890abcdef1234567890abcdef1234567890", "bc1q234567890abcdef1234567890abcdef1234567890", 10000, 100)

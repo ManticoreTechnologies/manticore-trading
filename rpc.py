@@ -103,6 +103,11 @@ def check_asset_confirming(address, assetName):
             return True
     return False
 
+def check_refund_confirmed(txid):
+    """ Check if a refund tx is confirmed """
+    tx_info = send_command("gettransaction", [txid])
+    return tx_info['confirmations'] > 0
+
 def check_evr_confirming(address):
     """ Check if an evr is in the mempool for an address """
     mempool_info = get_address_mempool(address, assets=False)

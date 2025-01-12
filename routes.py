@@ -44,7 +44,7 @@ def calculate_payment_amount(listing_id, quantity):
 """ Get all the listings """
 @server.route('/listings', methods=['GET'])
 def listings():
-    listings = Database.Listings.get_all_listings()
+    listings = Database.Listings.get_all_non_archived_listings()
     for listing in listings:
             print(listing)
     return jsonify(listings), 200
@@ -344,6 +344,11 @@ def manage_listing():
     if not bcrypt.checkpw(password.encode('utf-8'), listing_data['password_hash'].encode('utf-8')):
         logger.warning("Invalid password attempt.")
         return jsonify({"message": "Invalid password."}), 403
+
+    # Check if listing is errored, if so dont let them manage it
+    if listing_data['listing_status'] == "ERROR":
+        logger.warning(f"Listing {listing_id} is in ERROR state. Cannot manage listing.")
+        return jsonify({"message": "Listing is in ERROR state. Cannot manage listing."}), 400
 
     # Handle actions
     if action == 'fetch':

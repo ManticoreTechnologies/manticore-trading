@@ -3,7 +3,7 @@ from helper import settings, create_logger
 import time
 import Database.Listings
 import Database.Orders
-from rpc import check_evr_confirming, get_address_mempool, send_command, get_asset_balance, check_asset_confirming
+from rpc import check_evr_confirming, get_address_mempool, send_command, get_asset_balance, check_asset_confirming, check_refund_confirmed
 
 logger = create_logger(settings['Logging']['log_level'])
 
@@ -61,12 +61,12 @@ def process_listings():
         Database.Listings.update_listing_balance(listing['id'], balance)
 
         """ Step 1. Check if listing status is valid """
-        if listing['listing_status'] not in ["INACTIVE", "CONFIRMING", "ACTIVE", "REFUNDING", "CANCELED", "ARCHIVED"]:
+        
+        if listing['listing_status'] not in ["INACTIVE", "CONFIRMING", "ACTIVE", "REFUNDING", "CANCELED", "ARCHIVED", "ERROR"]:
             logger.warning(f"Invalid listing status {listing['listing_status']} for listing {listing['id']}. Skipping...")
             continue # Just warn for now, the listing just ever be processed
         
         """ Step 2. Check which status the order is in """
-
         if listing['listing_status'] == "INACTIVE": 
             """ 2.a. INACTIVE """
 
@@ -84,6 +84,12 @@ def process_listings():
                     """ 2.a.ii.@. If the asset is in the mempool, then the listing is CONFIRMING """
                     Database.Listings.update_listing_status(listing['id'], "CONFIRMING")
                     logger.debug(f"Listing {listing['id']} is now CONFIRMING.")
+            elif listing['listing_status'] == "ERROR":
+                """ 2.a.iii. If the available balance is less than 0, then we have a serious issue that needs to be investigated """
+                logger.error(f"Listing {listing['id']} has negative available balance {available_balance}. Expiring all orders and setting to INACTIVE.")
+                Database.Orders.expire_all_orders(listing['id'])
+                Database.Listings.clear_all_holds(listing['id'])
+                Database.Listings.update_listing_status(listing['id'], "INACTIVE")
             else:
                 """ 2.a.iii. If the available balance is less than 0, then we have a serious issue that needs to be investigated """
                 logger.error(f"Listing {listing['id']} has negative available balance {available_balance}. Setting to ERROR.")
@@ -108,11 +114,20 @@ def process_listings():
                 logger.debug(f"Listing {listing['id']} is now INACTIVE due to zero balance.")
         elif listing['listing_status'] == "REFUNDING":
             """ 2.d. REFUNDING """
-            if check_asset_confirming(listing['listing_address'], listing['asset_name']):
+            logger.debug(f"Refund for listing {listing['id']} is {listing['refund_txid']}")
+            available_balance = balance - listing['on_hold']
+            Database.Orders.expire_all_orders(listing['id'])
+            if check_refund_confirmed(listing['refund_txid']):
                 """ 2.d.i. If the refund tx has more than 0 confirmations, the listing is INACTIVE """
                 Database.Listings.update_listing_status(listing['id'], "INACTIVE")
                 logger.debug(f"Refund for listing {listing['id']} is now complete. Setting to INACTIVE.")
-
+        elif listing['listing_status'] == "ERROR":
+            """ 2.e. ERROR """
+            logger.error(f"Listing {listing['id']} is in ERROR state. Cancelling all orders for this listing.")
+            Database.Orders.expire_all_orders(listing['id'])
+            Database.Listings.clear_all_holds(listing['id'])
+            Database.Listings.update_listing_status(listing['id'], "INACTIVE")
+        
         elif listing['listing_status'] == "CANCELED":
             """ 2.e. CANCELED """
             Database.Listings.update_listing_status(listing['id'], "ARCHIVED")
