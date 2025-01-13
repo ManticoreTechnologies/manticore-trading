@@ -59,7 +59,7 @@ def add_order(listing_id, quantity, payout_address, payment_amount, fee):
     if not success:
         logger.error(f"Error placing holds on the database with listing ID: {listing_id}, quantity: {quantity}")
         Database.Listings.remove_holds(listing_id, quantity)
-        return None
+        return None, None, None
 
     logger.debug(f"Placed holds on the database with listing ID: {listing_id}, quantity: {quantity}")
 
@@ -68,7 +68,7 @@ def add_order(listing_id, quantity, payout_address, payment_amount, fee):
         payment_address = rpc.send_command("getnewaddress")
     except Exception as e:
         logger.error(f"Error generating payment address: {str(e)}")
-        return None
+        return None, None, None
 
     cursor.execute("INSERT INTO orders (listing_id, quantity, payout_address, payment_address, status, expiration_time, payment_amount, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (json.dumps(listing_id), json.dumps(quantity), payout_address, payment_address, status, expiration_time, payment_amount, fee))
     order_id = cursor.lastrowid
