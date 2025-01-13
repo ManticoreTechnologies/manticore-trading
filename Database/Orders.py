@@ -133,7 +133,9 @@ def delete_order(order_id):
     success = Database.Listings.remove_holds(order['listing_id'], order['quantity'])
     if not success:
         logger.error(f"Error removing hold on satoshis from listing {order['listing_id']}")
-        logger.error(f"Listing Status: {Database.Listings.get_listing_status(order['listing_id'])}")
+        # Get status of first listing if it's a list, otherwise get status directly
+        listing_id = order['listing_id'][0] if isinstance(order['listing_id'], list) else order['listing_id']
+        logger.error(f"Listing Status: {Database.Listings.get_listing_status(listing_id)}")
         return False
 
     """ 2. Delete the order from the database """
