@@ -85,7 +85,7 @@ async def process_new_transaction(tx_hash: str, pool) -> None:
                     entries.append({
                         'tx_hash': tx_hash,
                         'address': detail['address'],
-                        'entry_type': detail['category'],
+                        'entry_type': detail['category'],  # 'send' or 'receive' relative to our wallet
                         'asset_name': 'EVR',  # Regular EVR transaction
                         'amount': abs(detail.get('amount', 0)),
                         'fee': fee if detail['category'] == 'send' else 0,  # Fee only on send entries
@@ -103,7 +103,7 @@ async def process_new_transaction(tx_hash: str, pool) -> None:
                     entries.append({
                         'tx_hash': tx_hash,
                         'address': asset_detail['destination'],
-                        'entry_type': asset_detail['category'],
+                        'entry_type': asset_detail['category'],  # 'send' or 'receive' relative to our wallet
                         'asset_name': asset_detail['asset_name'],
                         'amount': abs(asset_detail.get('amount', 0)),
                         'fee': fee if asset_detail['category'] == 'send' else 0,  # Fee only on send entries
