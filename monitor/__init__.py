@@ -73,6 +73,58 @@ class TransactionMonitor:
                     WHERE confirmations > 0
                     '''
                 )
+
+                # Find newly confirmed transactions for listing addresses
+                newly_confirmed = await conn.fetch(
+                    '''
+                    WITH newly_confirmed AS (
+                        -- Get transactions that just reached min_confirmations
+                        SELECT 
+                            te.tx_hash,
+                            te.address,
+                            te.asset_name,
+                            te.amount,
+                            te.confirmations,
+                            te.time,
+                            la.listing_id,
+                            la.deposit_address
+                        FROM transaction_entries te
+                        JOIN listing_addresses la ON te.address = la.deposit_address
+                        WHERE te.confirmations = $1
+                        AND te.entry_type = 'receive'
+                    )
+                    -- Update listing balances
+                    UPDATE listing_balances lb
+                    SET 
+                        confirmed_balance = confirmed_balance + nc.amount,
+                        pending_balance = pending_balance - nc.amount,
+                        last_confirmed_tx_hash = nc.tx_hash,
+                        last_confirmed_tx_time = nc.time,
+                        updated_at = now()
+                    FROM newly_confirmed nc
+                    WHERE lb.listing_id = nc.listing_id
+                    AND lb.asset_name = nc.asset_name
+                    AND lb.deposit_address = nc.deposit_address
+                    RETURNING 
+                        nc.listing_id,
+                        nc.asset_name,
+                        nc.amount,
+                        nc.tx_hash,
+                        lb.confirmed_balance,
+                        lb.pending_balance
+                    ''',
+                    self.min_confirmations
+                )
+
+                # Log balance updates
+                for update in newly_confirmed:
+                    logger.info(
+                        f"Updated listing {update['listing_id']} balance: "
+                        f"Confirmed {update['amount']} {update['asset_name']} "
+                        f"(tx: {update['tx_hash']}, "
+                        f"new confirmed={update['confirmed_balance']}, "
+                        f"new pending={update['pending_balance']})"
+                    )
             
             logger.info(f"Processed block {block_data['height']} ({block_hash})")
         except Exception as e:
@@ -193,6 +245,46 @@ class TransactionMonitor:
                             entry['bip125_replaceable'],
                             entry['abandoned']
                         )
+
+                        # If this is a receive transaction, check if it's for a listing and update pending balance
+                        if entry['entry_type'] == 'receive':
+                            # Check if this is a listing deposit and update pending balance
+                            listing_rows = await conn.fetch(
+                                '''
+                                WITH listing_deposit AS (
+                                    SELECT 
+                                        la.listing_id,
+                                        la.asset_name,
+                                        la.deposit_address
+                                    FROM listing_addresses la
+                                    WHERE la.deposit_address = $1
+                                    AND la.asset_name = $2
+                                )
+                                UPDATE listing_balances lb
+                                SET 
+                                    pending_balance = pending_balance + $3,
+                                    updated_at = now()
+                                FROM listing_deposit ld
+                                WHERE lb.listing_id = ld.listing_id
+                                AND lb.asset_name = ld.asset_name
+                                AND lb.deposit_address = ld.deposit_address
+                                RETURNING 
+                                    lb.listing_id,
+                                    lb.asset_name,
+                                    lb.pending_balance
+                                ''',
+                                entry['address'],
+                                entry['asset_name'],
+                                entry['amount']
+                            )
+
+                            # Log listing deposits
+                            for row in listing_rows:
+                                logger.info(
+                                    f"Updated listing {row['listing_id']} pending balance: "
+                                    f"+{entry['amount']} {entry['asset_name']} "
+                                    f"(new pending={row['pending_balance']})"
+                                )
                 
                 # Enhanced logging for all entries
                 for entry in entries:

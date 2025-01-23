@@ -1,296 +1,217 @@
 # Database Module
 
-This module provides a robust database connection and management system specifically designed for CockroachDB cloud clusters. It handles connection pooling, schema management, and provides a clean interface for database operations.
-
-## Important Note
-
-**This module is specifically designed for CockroachDB cloud clusters and may not work with other database systems.**
+This module manages connections to CockroachDB, schema management, and database operations.
 
 ## Features
 
-- Automatic connection pooling management
-- Schema version tracking and migrations
-- Asynchronous database operations
-- Connection retry and error handling
-- Type-safe query interface
-
-## Quick Setup
-
-1. Ensure your `settings.conf` has the correct CockroachDB connection URL:
-   ```ini
-   [DEFAULT]
-   db_url = postgresql://user:pass@your-cluster-host:26257/your_db?sslmode=verify-full
-   ```
-
-2. Create your schema definition in `database/schema/`:
-   ```python
-   # database/schema/v1.py
-   schema = {
-       'version': 1,
-       'tables': [
-           {
-               'name': 'users',
-               'columns': [
-                   {'name': 'id', 'type': 'UUID', 'primary_key': True},
-                   {'name': 'username', 'type': 'STRING', 'unique': True},
-                   {'name': 'created_at', 'type': 'TIMESTAMP', 'default': 'now()'}
-               ]
-           }
-       ]
-   }
-   ```
-
-3. Initialize the database in your application:
-   ```python
-   from database import init_db, get_pool
-   
-   # Initialize database (call once at app startup)
-   await init_db()
-   
-   # Get connection pool for queries
-   pool = await get_pool()
-   ```
+- Connection pooling with asyncpg
+- Robust schema versioning and migration system
+- Automatic balance tracking for listings via triggers
+- Support for multiple assets per listing
+- Comprehensive transaction and block tracking
 
 ## Schema Management
 
-The database module uses a robust schema versioning system to manage database structure and migrations. The schema version is tracked in a special `schema_version` table that is automatically managed by the `SchemaManager` class.
+The schema is managed through version files in the `schema/` directory. Each version file defines:
 
-### Schema Version Table
+- Tables with columns, constraints, and indexes
+- Triggers for automatic data updates
+- Foreign key relationships
+- Conditional indexes
 
-The `schema_version` table is automatically created and managed by the schema manager. It has the following structure:
+The schema manager handles:
+1. Creating the schema_version table to track migrations
+2. Loading and validating schema files
+3. Creating tables, indexes, and constraints
+4. Setting up triggers for automatic updates
+5. Applying migrations in version order
 
+### Core Tables
+
+#### Blocks Table
 ```sql
-CREATE TABLE schema_version (
-    version INT8 PRIMARY KEY,
-    applied_at TIMESTAMP NOT NULL DEFAULT now()
-)
+CREATE TABLE blocks (
+    hash TEXT PRIMARY KEY,
+    height INT8 NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT now()
+);
 ```
 
-This table:
-- Tracks the current schema version number
-- Records when each version was applied
-- Is managed internally by the `SchemaManager`
-- Should never be modified directly or included in schema files
+#### Transaction Entries Table
+```sql
+CREATE TABLE transaction_entries (
+    tx_hash TEXT,
+    address TEXT,
+    entry_type TEXT,
+    asset_name TEXT,
+    amount DECIMAL NOT NULL,
+    fee DECIMAL,
+    confirmations INT8 DEFAULT 0,
+    time TIMESTAMP,
+    asset_type TEXT,
+    asset_message TEXT,
+    vout INT8,
+    trusted BOOLEAN DEFAULT false,
+    bip125_replaceable BOOLEAN DEFAULT false,
+    abandoned BOOLEAN DEFAULT false,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (tx_hash, address, entry_type, asset_name)
+);
+```
 
-### Creating Schema Files
+#### Listings Tables
+```sql
+CREATE TABLE listings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    seller_address TEXT NOT NULL,
+    listing_address TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    image_ipfs_hash TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
 
-Schema files should be placed in the `database/schema/` directory and follow the version naming convention:
-- `v1.py`
-- `v2.py`
-- etc.
+CREATE TABLE listing_prices (
+    listing_id UUID,
+    asset_name TEXT,
+    price_evr DECIMAL,
+    price_asset_name TEXT,
+    price_asset_amount DECIMAL,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name),
+    FOREIGN KEY (listing_id) REFERENCES listings(id)
+);
 
-Each schema file must define a `schema` dictionary with:
-- `version`: Schema version number (integer)
-- `tables`: List of table definitions with their full structure
-- `migrations`: (optional) SQL statements for custom migrations
+CREATE TABLE listing_addresses (
+    listing_id UUID,
+    asset_name TEXT,
+    deposit_address TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name),
+    FOREIGN KEY (listing_id) REFERENCES listings(id)
+);
 
-### Schema Structure
+CREATE TABLE listing_balances (
+    listing_id UUID,
+    asset_name TEXT,
+    deposit_address TEXT NOT NULL,
+    confirmed_balance DECIMAL NOT NULL DEFAULT 0,
+    pending_balance DECIMAL NOT NULL DEFAULT 0,
+    last_confirmed_tx_hash TEXT,
+    last_confirmed_tx_time TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name),
+    FOREIGN KEY (listing_id) REFERENCES listings(id),
+    FOREIGN KEY (deposit_address) REFERENCES listing_addresses(deposit_address)
+);
+```
 
-Tables should be defined in order of their dependencies. For example:
+### Automatic Balance Updates
 
+The system uses a trigger to automatically update listing balances when transactions reach the required number of confirmations (6 by default):
+
+```sql
+CREATE OR REPLACE FUNCTION update_listing_balance()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Only handle receive transactions that reach min_confirmations
+    IF NEW.entry_type = 'receive' AND NEW.confirmations >= 6 AND 
+       (OLD.confirmations IS NULL OR OLD.confirmations < 6) THEN
+        
+        -- Update listing balances for this transaction
+        UPDATE listing_balances lb
+        SET 
+            confirmed_balance = confirmed_balance + NEW.amount,
+            pending_balance = pending_balance - NEW.amount,
+            last_confirmed_tx_hash = NEW.tx_hash,
+            last_confirmed_tx_time = NEW.time,
+            updated_at = now()
+        FROM listing_addresses la
+        WHERE la.deposit_address = NEW.address
+        AND la.asset_name = NEW.asset_name
+        AND lb.listing_id = la.listing_id
+        AND lb.deposit_address = la.deposit_address;
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_listing_balance_trigger
+AFTER UPDATE OF confirmations ON transaction_entries
+FOR EACH ROW
+EXECUTE FUNCTION update_listing_balance();
+```
+
+## Usage
+
+### Initialization
 ```python
-# database/schema/v1.py
+from database import init_db, get_pool, close
+
+# Initialize database and schema
+await init_db()
+
+# Get connection pool
+pool = get_pool()
+
+# Use pool for queries
+async with pool.acquire() as conn:
+    result = await conn.fetch('SELECT * FROM listings')
+
+# Close pool when shutting down
+await close()
+```
+
+### Schema Updates
+
+To add a new schema version:
+
+1. Create a new file `vX.py` in the schema directory
+2. Define the schema with:
+   - `version`: Schema version number
+   - `tables`: List of table definitions
+   - `triggers`: List of trigger definitions
+
+Example:
+```python
 schema = {
     'version': 1,
-    'tables': [
-        # Parent table first
-        {
-            'name': 'users',
-            'columns': [
-                {'name': 'id', 'type': 'UUID', 'primary_key': True},
-                {'name': 'username', 'type': 'STRING', 'unique': True},
-                {'name': 'created_at', 'type': 'TIMESTAMP', 'default': 'now()'}
-            ]
-        },
-        # Child table with foreign key reference
-        {
-            'name': 'user_settings',
-            'columns': [
-                {'name': 'user_id', 'type': 'UUID'},
-                {'name': 'setting_key', 'type': 'STRING'},
-                {'name': 'setting_value', 'type': 'STRING'}
-            ],
-            'primary_key': ['user_id', 'setting_key'],
-            'foreign_keys': [
-                {'columns': ['user_id'], 'references': 'users(id)'}
-            ]
-        }
-    ]
+    'tables': [...],
+    'triggers': [...]
 }
 ```
 
-### Migration Process
+## CockroachDB Compatibility
 
-The schema manager handles migrations in a specific order to ensure consistency:
+The schema is designed to work with CockroachDB Cloud:
 
-1. **Table Cleanup**:
-   - Tables are dropped in reverse dependency order
-   - `CASCADE` is used to handle dependent objects
-   - Failures to drop tables are logged but don't stop the migration
-
-2. **Custom Migrations**:
-   - Any SQL in the `migrations` list is executed
-   - Use this for data migrations or complex schema changes
-   - Migrations run in the order specified
-
-3. **Table Creation**:
-   - Tables are created in dependency order
-   - First pass creates tables without foreign keys
-   - Second pass adds foreign key constraints
-   - Finally, indexes are created
-
-4. **Version Tracking**:
-   - Schema version is updated after successful migration
-   - Each version is applied in a single transaction
-
-### Best Practices for Schema Changes
-
-1. **Clean Migrations**:
-   ```python
-   schema = {
-       'version': 2,
-       'tables': [
-           # Define complete table structure
-           {'name': 'users', 'columns': [...]},
-           {'name': 'settings', 'columns': [...]}
-       ],
-       'migrations': [
-           # Optional: Migrate data from old structure
-           '''
-           INSERT INTO new_table (id, data)
-           SELECT id, data FROM old_table;
-           '''
-       ]
-   }
-   ```
-
-2. **Foreign Key Management**:
-   - List tables in dependency order (parents before children)
-   - Use explicit foreign key constraints
-   - Let the schema manager handle the creation order
-
-3. **Index Creation**:
-   ```python
-   'indexes': [
-       {'name': 'users_by_email', 'columns': ['email'], 'unique': True},
-       {'name': 'users_by_created', 'columns': ['created_at DESC']}
-   ]
-   ```
-
-4. **Data Types**:
-   - Use CockroachDB-compatible types
-   - Specify precision for numeric types
-   - Use appropriate string types
-
-5. **Nullable Fields**:
-   ```python
-   'columns': [
-       {'name': 'required_field', 'type': 'STRING', 'nullable': False},
-       {'name': 'optional_field', 'type': 'STRING', 'nullable': True}
-   ]
-   ```
-
-### Handling Schema Updates
-
-When you need to update the schema:
-
-1. Create a new version file with a complete table definition
-2. Include any necessary data migrations in the `migrations` list
-3. Test the migration on a copy of production data
-4. Deploy the new schema version
-
-The schema manager will:
-- Detect the new version
-- Drop existing tables in the correct order
-- Apply any custom migrations
-- Create new tables with the updated structure
-- Add constraints and indexes
-- Update the schema version
-
-## Connection Pool Management
-
-The module automatically handles connection pooling with the following features:
-
-- Dynamic pool sizing based on load
-- Connection health checks
-- Automatic reconnection
-- Connection timeouts
-- Statement timeout limits
-- Retry policies for transient errors
-
-## Usage Examples
-
-### Basic Queries
-```python
-from database import get_pool
-
-async def get_user(username: str):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        result = await conn.fetchrow(
-            'SELECT * FROM users WHERE username = $1',
-            username
-        )
-        return result
-
-async def create_user(username: str):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                'INSERT INTO users (id, username) VALUES (gen_random_uuid(), $1)',
-                username
-            )
-```
-
-### Using Transactions
-```python
-async def transfer_funds(from_id: str, to_id: str, amount: int):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            # CockroachDB specific retry logic is handled automatically
-            await conn.execute(
-                'UPDATE accounts SET balance = balance - $1 WHERE id = $2',
-                amount, from_id
-            )
-            await conn.execute(
-                'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
-                amount, to_id
-            )
-```
+- Uses compatible data types (INT8, TEXT, TIMESTAMP, etc.)
+- Properly handles foreign key constraints
+- Uses triggers for automatic updates
+- Includes appropriate indexes for performance
 
 ## Error Handling
 
-The module provides custom exception classes for different types of database errors:
-
-- `DatabaseConnectionError`: Connection-related issues
-- `DatabaseSchemaError`: Schema validation or migration issues
-- `DatabaseQueryError`: Query execution errors
-- `DatabasePoolError`: Connection pool issues
-
-Example error handling:
-```python
-from database.exceptions import DatabaseQueryError
-
-async def safe_query():
-    try:
-        result = await get_user('username')
-        return result
-    except DatabaseQueryError as e:
-        logger.error(f"Query failed: {e}")
-        raise
-```
+The module includes custom exceptions:
+- `DatabaseError`: Base exception for database errors
+- `DatabasePoolError`: Connection pool errors
+- `DatabaseSchemaError`: Schema validation/migration errors
 
 ## Best Practices
 
-1. Always use connection pooling (don't create individual connections)
-2. Use transactions for multi-statement operations
-3. Handle retryable errors using the built-in retry mechanism
-4. Keep schema versions in sequential order
-5. Document schema changes in migration files
-6. Use parameterized queries to prevent SQL injection
-7. Set appropriate timeouts for your queries
+1. Always use the connection pool
+2. Handle database errors appropriately
+3. Use transactions for multi-statement operations
+4. Add appropriate indexes for queries
+5. Test schema changes thoroughly
+6. Document schema updates in version files
 
 ## Configuration Options
 
