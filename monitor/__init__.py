@@ -193,7 +193,7 @@ class TransactionMonitor:
                             'tx_hash': tx_hash,
                             'address': asset_detail['destination'],
                             'entry_type': asset_detail['category'],  # 'send' or 'receive' relative to our wallet
-                            'asset_name': asset_detail['asset_name'],
+                            'asset_name': asset_detail['asset_name'],  # Use asset name from asset_details
                             'amount': amount,
                             'fee': fee if asset_detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
                             'confirmations': confirmations,
@@ -276,7 +276,7 @@ class TransactionMonitor:
                             # Use listing manager to handle deposit
                             deposit_result = await self.listing_manager.handle_new_deposit(
                                 deposit_address=entry['address'],
-                                asset_name=entry['asset_name'],
+                                asset_name=entry['asset_name'],  # Use the correct asset name from the entry
                                 amount=entry['amount'],
                                 tx_hash=entry['tx_hash']
                             )
@@ -285,7 +285,7 @@ class TransactionMonitor:
                             if deposit_result:
                                 logger.info(
                                     f"Updated listing {deposit_result['listing_id']} pending balance: "
-                                    f"+{entry['amount']} {entry['asset_name']} "
+                                    f"+{entry['amount']} {entry['asset_name']} "  # Use the correct asset name in logging
                                     f"(new pending={deposit_result['pending_balance']})"
                                 )
                 

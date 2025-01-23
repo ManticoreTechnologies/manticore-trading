@@ -54,6 +54,7 @@ schema = {
                 {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
                 {'name': 'seller_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'listing_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'deposit_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'name', 'type': 'TEXT', 'nullable': False},
                 {'name': 'description', 'type': 'TEXT'},
                 {'name': 'image_ipfs_hash', 'type': 'TEXT'},
@@ -63,7 +64,8 @@ schema = {
             ],
             'indexes': [
                 {'name': 'idx_listings_seller', 'columns': ['seller_address']},
-                {'name': 'idx_listings_address', 'columns': ['listing_address'], 'unique': True}
+                {'name': 'idx_listings_address', 'columns': ['listing_address'], 'unique': True},
+                {'name': 'idx_listings_deposit', 'columns': ['deposit_address'], 'unique': True}  # Add index for deposit_address
             ]
         },
         {
@@ -83,27 +85,10 @@ schema = {
             ]
         },
         {
-            'name': 'listing_addresses',
-            'columns': [
-                {'name': 'listing_id', 'type': 'UUID'},
-                {'name': 'asset_name', 'type': 'TEXT'},
-                {'name': 'deposit_address', 'type': 'TEXT', 'nullable': False},
-                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
-            ],
-            'primary_key': ['listing_id', 'asset_name'],
-            'foreign_keys': [
-                {'columns': ['listing_id'], 'references': 'listings(id)'}
-            ],
-            'indexes': [
-                {'name': 'idx_listing_addresses_deposit', 'columns': ['deposit_address'], 'unique': True}
-            ]
-        },
-        {
             'name': 'listing_balances',
             'columns': [
                 {'name': 'listing_id', 'type': 'UUID'},
                 {'name': 'asset_name', 'type': 'TEXT'},
-                {'name': 'deposit_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
                 {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
                 {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
@@ -113,8 +98,60 @@ schema = {
             ],
             'primary_key': ['listing_id', 'asset_name'],
             'foreign_keys': [
-                {'columns': ['listing_id'], 'references': 'listings(id)'},
-                {'columns': ['deposit_address'], 'references': 'listing_addresses(deposit_address)'}
+                {'columns': ['listing_id'], 'references': 'listings(id)'}
+            ]
+        },
+        {
+            'name': 'orders',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
+                {'name': 'total_price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'fee_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'payment_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'confirmed_paid_evr', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'pending_paid_evr', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'last_payment_tx_hash', 'type': 'TEXT'},
+                {'name': 'last_payment_time', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)'}
+            ],
+            'indexes': [
+                {'name': 'idx_orders_listing', 'columns': ['listing_id']},
+                {'name': 'idx_orders_buyer', 'columns': ['buyer_address']},
+                {'name': 'idx_orders_status', 'columns': ['status']},
+                {'name': 'idx_orders_payment_address', 'columns': ['payment_address'], 'unique': True}
+            ],
+            'checks': [
+                {'name': 'valid_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"},
+                {'name': 'positive_total_price', 'expression': "total_price_evr > 0"},
+                {'name': 'positive_fee', 'expression': "fee_evr > 0"}
+            ]
+        },
+        {
+            'name': 'order_items',
+            'columns': [
+                {'name': 'order_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'fulfillment_tx_hash', 'type': 'TEXT'},
+                {'name': 'fulfillment_time', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'primary_key': ['order_id', 'asset_name'],
+            'foreign_keys': [
+                {'columns': ['order_id'], 'references': 'orders(id)'}
+            ],
+            'checks': [
+                {'name': 'positive_amount', 'expression': "amount > 0"},
+                {'name': 'positive_price', 'expression': "price_evr > 0"}
             ]
         }
     ],
@@ -124,7 +161,8 @@ schema = {
             'function_name': 'update_listing_balance',
             'table': 'transaction_entries',
             'timing': 'AFTER',
-            'event': 'UPDATE OF confirmations',
+            'events': ['UPDATE OF confirmations'],
+            'level': 'ROW',
             'function_body': '''
                 BEGIN
                     -- Only handle receive transactions that reach min_confirmations
@@ -139,11 +177,53 @@ schema = {
                             last_confirmed_tx_hash = (NEW).tx_hash,
                             last_confirmed_tx_time = (NEW).time,
                             updated_at = now()
-                        FROM listing_addresses la
-                        WHERE la.deposit_address = (NEW).address
-                        AND la.asset_name = (NEW).asset_name
-                        AND lb.listing_id = la.listing_id
-                        AND lb.deposit_address = la.deposit_address;
+                        FROM listings l
+                        WHERE l.deposit_address = (NEW).address
+                        AND l.id = lb.listing_id
+                        AND lb.asset_name = (NEW).asset_name;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'update_order_balance_trigger',
+            'function_name': 'update_order_balance',
+            'table': 'transaction_entries',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE OF confirmations'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Only handle receive transactions to order payment addresses
+                    IF (NEW).entry_type = 'receive' AND (NEW).asset_name = 'EVR' THEN
+                        -- Update order payment tracking
+                        UPDATE orders
+                        SET 
+                            confirmed_paid_evr = CASE 
+                                WHEN (NEW).confirmations >= 6 THEN confirmed_paid_evr + (NEW).amount
+                                ELSE confirmed_paid_evr
+                            END,
+                            pending_paid_evr = CASE 
+                                WHEN (NEW).confirmations >= 6 THEN pending_paid_evr - (NEW).amount
+                                ELSE pending_paid_evr + (NEW).amount
+                            END,
+                            last_payment_tx_hash = (NEW).tx_hash,
+                            last_payment_time = (NEW).time,
+                            status = CASE
+                                WHEN confirmed_paid_evr + CASE 
+                                    WHEN (NEW).confirmations >= 6 THEN (NEW).amount
+                                    ELSE 0
+                                END >= total_price_evr THEN 'paid'
+                                WHEN pending_paid_evr + CASE
+                                    WHEN (NEW).confirmations >= 6 THEN -1 * (NEW).amount
+                                    ELSE (NEW).amount
+                                END > 0 THEN 'partially_paid'
+                                ELSE status
+                            END,
+                            updated_at = now()
+                        WHERE payment_address = (NEW).address;
                     END IF;
                     
                     RETURN NEW;
@@ -151,4 +231,4 @@ schema = {
             '''
         }
     ]
-} 
+}

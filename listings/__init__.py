@@ -30,6 +30,7 @@ SYSTEM_FIELDS = {
     'id',
     'seller_address',
     'listing_address',
+    'deposit_address',
     'created_at',
     'updated_at'
 }
@@ -101,27 +102,28 @@ class ListingManager:
         await self.ensure_pool()
         
         try:
-            # Generate listing address
+            # Generate listing and deposit addresses
             listing_address = getnewaddress()
+            deposit_address = getnewaddress()
             
             # Create the listing in its own transaction
             async with self.pool.acquire() as conn:
                 listing_id = await conn.fetchval(
                     '''
                     INSERT INTO listings (
-                        seller_address, listing_address, name, description, image_ipfs_hash
-                    ) VALUES ($1, $2, $3, $4, $5)
+                        seller_address, listing_address, deposit_address, 
+                        name, description, image_ipfs_hash
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
                     RETURNING id
                     ''',
-                    seller_address, listing_address, name, description, image_ipfs_hash
+                    seller_address, listing_address, deposit_address,
+                    name, description, image_ipfs_hash
                 )
             
-            # Add prices and addresses if specified
+            # Add prices if specified
             if prices:
                 for price in prices:
                     asset_name = price['asset_name']
-                    # Create deposit address for the asset
-                    deposit_address = getnewaddress()
                     
                     # Add price entry in its own transaction
                     async with self.pool.acquire() as conn:
@@ -139,17 +141,17 @@ class ListingManager:
                             price.get('price_asset_amount')
                         )
                     
-                    # Add deposit address in its own transaction
+                    # Initialize balance entry
                     async with self.pool.acquire() as conn:
                         await conn.execute(
                             '''
-                            INSERT INTO listing_addresses (
-                                listing_id, asset_name, deposit_address
-                            ) VALUES ($1, $2, $3)
+                            INSERT INTO listing_balances (
+                                listing_id, asset_name, confirmed_balance,
+                                pending_balance
+                            ) VALUES ($1, $2, 0, 0)
                             ''',
                             listing_id,
-                            asset_name,
-                            deposit_address
+                            asset_name
                         )
             
             # Return full listing details
@@ -166,7 +168,7 @@ class ListingManager:
             listing_id: The listing UUID
             
         Returns:
-            Dict containing listing details including prices, addresses and balances
+            Dict containing listing details including prices and balances
             
         Raises:
             ListingNotFoundError: If listing doesn't exist
@@ -192,13 +194,6 @@ class ListingManager:
                 listing_id
             )
             result['prices'] = [dict(p) for p in prices]
-            
-            # Get addresses
-            addresses = await conn.fetch(
-                'SELECT * FROM listing_addresses WHERE listing_id = $1',
-                listing_id
-            )
-            result['addresses'] = [dict(a) for a in addresses]
             
             # Get balances
             balances = await conn.fetch(
@@ -288,12 +283,6 @@ class ListingManager:
             # First delete balances
             await conn.execute(
                 'DELETE FROM listing_balances WHERE listing_id = $1',
-                listing_id
-            )
-            
-            # Then delete addresses
-            await conn.execute(
-                'DELETE FROM listing_addresses WHERE listing_id = $1',
                 listing_id
             )
             
@@ -414,14 +403,14 @@ class ListingManager:
             # Return updated listing
             return await self.get_listing(listing_id)
     
-    async def get_deposit_addresses(self, listing_id: Union[str, uuid.UUID]) -> Dict[str, str]:
-        """Get deposit addresses for a listing, keyed by asset name.
+    async def get_deposit_address(self, listing_id: Union[str, uuid.UUID]) -> str:
+        """Get deposit address for a listing.
         
         Args:
             listing_id: The listing UUID
             
         Returns:
-            Dict mapping asset names to deposit addresses
+            The listing's deposit address
             
         Raises:
             ListingNotFoundError: If listing doesn't exist
@@ -429,22 +418,121 @@ class ListingManager:
         await self.ensure_pool()
         
         async with self.pool.acquire() as conn:
-            # Check listing exists
-            exists = await conn.fetchval(
-                'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
+            # Get deposit address
+            deposit_address = await conn.fetchval(
+                'SELECT deposit_address FROM listings WHERE id = $1',
                 listing_id
             )
-            if not exists:
+            
+            if not deposit_address:
                 raise ListingNotFoundError(f"Listing {listing_id} not found")
             
-            # Get addresses
-            rows = await conn.fetch(
-                'SELECT asset_name, deposit_address FROM listing_addresses WHERE listing_id = $1',
-                listing_id
+            return deposit_address
+
+    async def handle_new_deposit(
+        self,
+        deposit_address: str,
+        asset_name: str,
+        amount: Decimal,
+        tx_hash: str
+    ) -> Optional[Dict[str, Any]]:
+        """Handle a new deposit transaction for a listing.
+        
+        Args:
+            deposit_address: The deposit address that received the transaction
+            asset_name: Name of the asset received
+            amount: Amount received
+            tx_hash: Transaction hash
+            
+        Returns:
+            Dict with listing details if deposit was for a listing, None otherwise
+        """
+        await self.ensure_pool()
+        
+        async with self.pool.acquire() as conn:
+            # First check if we have a listing with this deposit address
+            listing = await conn.fetchrow(
+                '''
+                SELECT id, deposit_address
+                FROM listings
+                WHERE deposit_address = $1
+                ''',
+                deposit_address
             )
             
-            return {row['asset_name']: row['deposit_address'] for row in rows}
-    
+            if not listing:
+                logger.debug(f"No listing found for deposit address {deposit_address}")
+                return None
+
+            # Check if we need to create a price entry
+            price_exists = await conn.fetchval(
+                '''
+                SELECT EXISTS (
+                    SELECT 1 FROM listing_prices 
+                    WHERE listing_id = $1 AND asset_name = $2
+                )
+                ''',
+                listing['id'],
+                asset_name
+            )
+
+            if not price_exists:
+                # Create price entry with very high default price
+                await conn.execute(
+                    '''
+                    INSERT INTO listing_prices (
+                        listing_id, asset_name, price_evr
+                    ) VALUES ($1, $2, $3)
+                    ''',
+                    listing['id'],
+                    asset_name,
+                    Decimal('999999999999')
+                )
+                logger.info(
+                    f"Created default price entry for listing {listing['id']}, "
+                    f"asset {asset_name} with high default price"
+                )
+                
+            # Insert or update balance
+            listing_rows = await conn.fetch(
+                '''
+                INSERT INTO listing_balances (
+                    listing_id, asset_name, pending_balance,
+                    confirmed_balance
+                ) VALUES (
+                    $1, $2, $3, 0
+                )
+                ON CONFLICT (listing_id, asset_name) DO UPDATE
+                SET 
+                    pending_balance = listing_balances.pending_balance + $3,
+                    updated_at = now()
+                RETURNING 
+                    listing_id,
+                    asset_name,
+                    pending_balance
+                ''',
+                listing['id'],
+                asset_name,
+                amount
+            )
+            
+            if listing_rows:
+                # Return first row since there should only be one
+                row = listing_rows[0]
+                logger.info(
+                    f"Updated balance for listing {row['listing_id']}: "
+                    f"asset={row['asset_name']}, "
+                    f"address={deposit_address}, "
+                    f"amount={amount}, "
+                    f"new_pending={row['pending_balance']}"
+                )
+                return {
+                    'listing_id': row['listing_id'],
+                    'asset_name': row['asset_name'],
+                    'pending_balance': row['pending_balance']
+                }
+            return None
+
     async def get_balances(self, listing_id: Union[str, uuid.UUID]) -> Dict[str, Dict[str, Decimal]]:
         """Get balances for a listing, keyed by asset name.
         
@@ -490,111 +578,6 @@ class ListingManager:
                 }
                 for row in rows
             }
-
-    async def handle_new_deposit(
-        self,
-        deposit_address: str,
-        asset_name: str,
-        amount: Decimal,
-        tx_hash: str
-    ) -> Optional[Dict[str, Any]]:
-        """Handle a new deposit transaction for a listing.
-        
-        Args:
-            deposit_address: The deposit address that received the transaction
-            asset_name: Name of the asset received
-            amount: Amount received
-            tx_hash: Transaction hash
-            
-        Returns:
-            Dict with listing details if deposit was for a listing, None otherwise
-        """
-        await self.ensure_pool()
-        
-        async with self.pool.acquire() as conn:
-            # First check if we have a listing address entry
-            listing_addr = await conn.fetchrow(
-                '''
-                SELECT listing_id, asset_name, deposit_address
-                FROM listing_addresses
-                WHERE deposit_address = $1
-                ''',
-                deposit_address
-            )
-            
-            if not listing_addr:
-                logger.debug(f"No listing found for deposit address {deposit_address}")
-                return None
-
-            # Check if we need to create a price entry
-            price_exists = await conn.fetchval(
-                '''
-                SELECT EXISTS (
-                    SELECT 1 FROM listing_prices 
-                    WHERE listing_id = $1 AND asset_name = $2
-                )
-                ''',
-                listing_addr['listing_id'],
-                asset_name
-            )
-
-            if not price_exists:
-                # Create price entry with very high default price
-                await conn.execute(
-                    '''
-                    INSERT INTO listing_prices (
-                        listing_id, asset_name, price_evr
-                    ) VALUES ($1, $2, $3)
-                    ''',
-                    listing_addr['listing_id'],
-                    asset_name,
-                    Decimal('999999999999')
-                )
-                logger.info(
-                    f"Created default price entry for listing {listing_addr['listing_id']}, "
-                    f"asset {asset_name} with high default price"
-                )
-                
-            # Insert or update balance
-            listing_rows = await conn.fetch(
-                '''
-                INSERT INTO listing_balances (
-                    listing_id, asset_name, deposit_address, pending_balance,
-                    confirmed_balance
-                ) VALUES (
-                    $1, $2, $3, $4, 0
-                )
-                ON CONFLICT (listing_id, asset_name) DO UPDATE
-                SET 
-                    pending_balance = listing_balances.pending_balance + $4,
-                    updated_at = now()
-                RETURNING 
-                    listing_id,
-                    asset_name,
-                    pending_balance
-                ''',
-                listing_addr['listing_id'],
-                listing_addr['asset_name'],  # Use the asset name from listing_addresses
-                listing_addr['deposit_address'],
-                amount
-            )
-            
-            if listing_rows:
-                # Return first row since there should only be one
-                row = listing_rows[0]
-                logger.info(
-                    f"Updated balance for listing {row['listing_id']}: "
-                    f"asset={row['asset_name']}, "
-                    f"address={deposit_address}, "
-                    f"amount={amount}, "
-                    f"new_pending={row['pending_balance']}"
-                )
-                return {
-                    'listing_id': row['listing_id'],
-                    'asset_name': row['asset_name'],
-                    'pending_balance': row['pending_balance']
-                }
-            return None
 
 # Export public interface
 __all__ = [

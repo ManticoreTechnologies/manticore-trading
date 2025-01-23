@@ -150,6 +150,32 @@ class SchemaManager:
             logger.error(f"Schema migration failed: {e}")
             raise DatabaseSchemaError(f"Failed to apply schema migrations: {e}")
     
+    async def _create_function(self, conn, function: Dict[str, Any]) -> None:
+        """Create a standalone database function.
+        
+        Args:
+            conn: Database connection
+            function: Function definition dictionary
+        """
+        try:
+            args = []
+            for arg in function.get('args', []):
+                args.append(f"{arg['name']} {arg['type']}")
+                
+            args_str = ', '.join(args)
+            
+            await conn.execute(f'''
+                CREATE OR REPLACE FUNCTION {function['name']}({args_str})
+                RETURNS {function['returns']}
+                AS $${function['body']}$$ 
+                LANGUAGE {function['language']};
+            ''')
+            logger.info(f"Created function {function['name']}")
+        except Exception as e:
+            if 'already exists' not in str(e):
+                raise
+            logger.debug(f"Function already exists: {str(e)}")
+
     async def _create_fresh_schema(self, conn, schema: Dict[str, Any]) -> None:
         """Create a fresh schema installation.
         
@@ -168,7 +194,11 @@ class SchemaManager:
         for table in schema.get('tables', []):
             await self._add_constraints(conn, table)
             
-        # Create triggers and functions
+        # Create standalone functions after tables exist
+        for function in schema.get('functions', []):
+            await self._create_function(conn, function)
+            
+        # Create triggers last since they may depend on functions
         for trigger in schema.get('triggers', []):
             await self._create_trigger(conn, trigger)
             
@@ -186,6 +216,19 @@ class SchemaManager:
             conn: Database connection
             schema: Schema definition for this version
         """
+        # First create any new tables
+        for table in schema.get('tables', []):
+            await self._create_table(conn, table)
+            
+        # Add foreign keys and indexes
+        for table in schema.get('tables', []):
+            await self._add_constraints(conn, table)
+            
+        # Create standalone functions after tables exist
+        for function in schema.get('functions', []):
+            await self._create_function(conn, function)
+            
+        # Apply raw SQL migrations if any
         for migration in schema.get('migrations', []):
             try:
                 await conn.execute(migration)
@@ -193,6 +236,10 @@ class SchemaManager:
                 if 'already exists' not in str(e):
                     raise
                 logger.debug(f"Skipping existing object: {str(e)}")
+                
+        # Create triggers last since they may depend on functions
+        for trigger in schema.get('triggers', []):
+            await self._create_trigger(conn, trigger)
 
     async def _drop_all_tables(self, conn) -> None:
         """Drop all existing tables in the database.
@@ -323,11 +370,19 @@ class SchemaManager:
             ''')
             logger.info(f"Created trigger function {trigger['function_name']}")
             
+            # Handle both 'event' and 'events' keys for backward compatibility
+            events = trigger.get('events', [trigger.get('event')] if trigger.get('event') else [])
+            if not events:
+                raise DatabaseSchemaError(f"Trigger {trigger['name']} missing 'event' or 'events'")
+            
+            events_str = ' OR '.join(events)
+            level = trigger.get('level', 'ROW')
+            
             # Create trigger
             await conn.execute(f'''
                 CREATE TRIGGER {trigger['name']}
-                {trigger['timing']} {trigger['event']} ON {trigger['table']}
-                FOR EACH ROW
+                {trigger['timing']} {events_str} ON {trigger['table']}
+                FOR EACH {level}
                 EXECUTE FUNCTION {trigger['function_name']}();
             ''')
             logger.info(f"Created trigger {trigger['name']} on {trigger['table']}")

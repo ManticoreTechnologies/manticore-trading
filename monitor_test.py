@@ -27,7 +27,7 @@ async def main():
         listing_manager = ListingManager()
         monitor = TransactionMonitor()
         
-        # Create a test listing with EVR price
+        # Create a test listing with EVR and asset prices
         logger.info("Creating test listing...")
         listing = await listing_manager.create_listing(
             seller_address="EXS1RtxtkDN1XELcHuQQw3zxYEAEDNs8Hv",
@@ -39,19 +39,22 @@ async def main():
                     'price_evr': 50
                 },
                 {
+                    'asset_name': 'CRONOS',  # Add explicit CRONOS price
+                    'price_evr': 75
+                },
+                {
                     'asset_name': 'TEST',
                     'price_evr': 100
                 }
             ]
         )
 
-        # Get the EVR deposit address
-        deposit_addresses = await listing_manager.get_deposit_addresses(listing['id'])
-        evr_address = deposit_addresses['EVR']
+        # Get the listing's deposit address
+        deposit_address = await listing_manager.get_deposit_address(listing['id'])
         
         print("\n=== Test Listing Created ===")
         print(f"Listing ID: {listing['id']}")
-        print(f"EVR Deposit Address: {evr_address}")
+        print(f"Deposit Address: {deposit_address}")
         print("===========================\n")
 
         # Start the monitor

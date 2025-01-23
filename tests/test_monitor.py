@@ -49,19 +49,22 @@ async def test_real_listing_monitor(listing_manager, monitor):
                     'price_evr': 50
                 },
                 {
+                    'asset_name': 'CRONOS',
+                    'price_evr': 75
+                },
+                {
                     'asset_name': 'TEST',
                     'price_evr': 100
                 }
             ]
         )
 
-        # Get the EVR deposit address
-        deposit_addresses = await listing_manager.get_deposit_addresses(listing['id'])
-        evr_address = deposit_addresses['EVR']
+        # Get the listing's deposit address
+        deposit_address = await listing_manager.get_deposit_address(listing['id'])
         
         print("\n=== Test Listing Created ===")
         print(f"Listing ID: {listing['id']}")
-        print(f"EVR Deposit Address: {evr_address}")
+        print(f"Deposit Address: {deposit_address}")
         print("===========================\n")
 
         # Start the monitor
