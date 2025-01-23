@@ -11,6 +11,8 @@ This module provides real-time monitoring of blockchain activity including:
 import asyncio
 import logging
 from typing import Optional, Tuple, Literal
+from datetime import datetime
+from uuid import UUID
 
 from rpc import getblockcount, getblock, getblockhash, getrawtransaction, gettransaction
 from rpc.zmq import subscribe, start, close, ZMQNotification
@@ -24,13 +26,15 @@ logger = logging.getLogger(__name__)
 class TransactionMonitor:
     """Monitor blockchain transactions and blocks."""
     
-    def __init__(self, pool=None):
+    def __init__(self, pool=None, min_confirmations: int = 6):
         """Initialize the transaction monitor.
         
         Args:
             pool: Database connection pool
+            min_confirmations: Minimum number of confirmations for a transaction to be considered confirmed
         """
         self.pool = pool or get_pool()
+        self.min_confirmations = min_confirmations
         self.running = True
         self.notification_queue = asyncio.Queue()
         self.listing_manager = ListingManager(pool)
@@ -46,85 +50,29 @@ class TransactionMonitor:
             # Get full block data (RPC calls are not async)
             block_data = getblock(block_hash)
             
+            # Convert Unix timestamp to datetime
+            block_time = datetime.fromtimestamp(block_data['time'])
+            
             # Store in database
             async with self.pool.acquire() as conn:
-                async with conn.transaction():
-                    # Insert new block
-                    await conn.execute(
-                        'INSERT INTO blocks (hash, height, timestamp) VALUES ($1, $2, $3)',
-                        block_hash,
-                        block_data['height'],
-                        block_data['time']
-                    )
-                    
-                    # Increment confirmations for all previously confirmed transactions
-                    await conn.execute(
-                        '''
-                        UPDATE transaction_entries 
-                        SET 
-                            confirmations = confirmations + 1,
-                            updated_at = now()
-                        WHERE confirmations > 0
-                        '''
-                    )
-                    
-                    # Also update listing transaction confirmations
-                    await conn.execute(
-                        '''
-                        UPDATE listing_transactions
-                        SET
-                            confirmations = confirmations + 1,
-                            updated_at = now()
-                        WHERE confirmations > 0
-                        '''
-                    )
-                    
-                    # Check for newly confirmed listing deposits
-                    newly_confirmed = await conn.fetch(
-                        '''
-                        SELECT 
-                            lt.tx_hash,
-                            lt.listing_id,
-                            lt.asset_name,
-                            lt.amount,
-                            lt.confirmations
-                        FROM listing_transactions lt
-                        WHERE lt.status = 'pending'
-                        AND lt.confirmations >= $1
-                        ''',
-                        self.min_confirmations
-                    )
-                    
-                    # Process newly confirmed deposits
-                    for tx in newly_confirmed:
-                        # Update transaction status
-                        await conn.execute(
-                            '''
-                            UPDATE listing_transactions
-                            SET status = 'confirmed',
-                                updated_at = now()
-                            WHERE tx_hash = $1
-                            AND listing_id = $2
-                            AND asset_name = $3
-                            ''',
-                            tx['tx_hash'],
-                            tx['listing_id'],
-                            tx['asset_name']
-                        )
-                        
-                        # Update listing balance
-                        await self.listing_manager.update_listing_balance(
-                            listing_id=tx['listing_id'],
-                            asset_name=tx['asset_name'],
-                            confirmed_delta=tx['amount'],
-                            pending_delta=-tx['amount'],
-                            tx_hash=tx['tx_hash']
-                        )
-                        
-                        logger.info(
-                            f"Confirmed deposit for listing {tx['listing_id']}: "
-                            f"{tx['amount']} {tx['asset_name']} (tx: {tx['tx_hash']})"
-                        )
+                # Insert new block
+                await conn.execute(
+                    'INSERT INTO blocks (hash, height, timestamp) VALUES ($1, $2, $3)',
+                    block_hash,
+                    block_data['height'],
+                    block_time
+                )
+                
+                # Increment confirmations for all previously confirmed transactions
+                await conn.execute(
+                    '''
+                    UPDATE transaction_entries 
+                    SET 
+                        confirmations = confirmations + 1,
+                        updated_at = now()
+                    WHERE confirmations > 0
+                    '''
+                )
             
             logger.info(f"Processed block {block_data['height']} ({block_hash})")
         except Exception as e:
@@ -151,7 +99,7 @@ class TransactionMonitor:
                 logger.debug(f"Wallet transaction {tx_hash} found with {confirmations} confirmations")
                 
                 # Get common transaction details
-                time = tx_data.get('time')
+                time = datetime.fromtimestamp(tx_data.get('time', 0)) if tx_data.get('time') else None
                 trusted = wallet_tx.get('trusted', False)
                 bip125_replaceable = wallet_tx.get('bip125-replaceable', 'no') == 'yes'
                 fee = abs(wallet_tx.get('fee', 0)) if wallet_tx.get('fee') else 0
@@ -201,103 +149,50 @@ class TransactionMonitor:
                 
                 # Store all entries in database
                 async with self.pool.acquire() as conn:
-                    async with conn.transaction():
-                        for entry in entries:
-                            # Store transaction entry
-                            await conn.execute(
-                                '''
-                                INSERT INTO transaction_entries (
-                                    tx_hash, address, entry_type, asset_name,
-                                    amount, fee, confirmations, time,
-                                    asset_type, asset_message, vout,
-                                    trusted, bip125_replaceable, abandoned,
-                                    updated_at
-                                )
-                                VALUES (
-                                    $1, $2, $3, $4, $5, $6, $7, $8,
-                                    $9, $10, $11, $12, $13, $14, now()
-                                )
-                                ON CONFLICT (tx_hash, address, entry_type, asset_name)
-                                DO UPDATE SET
-                                    amount = $5,
-                                    fee = $6,
-                                    confirmations = $7,
-                                    time = $8,
-                                    asset_type = $9,
-                                    asset_message = $10,
-                                    vout = $11,
-                                    trusted = $12,
-                                    bip125_replaceable = $13,
-                                    abandoned = $14,
-                                    updated_at = now()
-                                ''',
-                                entry['tx_hash'],
-                                entry['address'],
-                                entry['entry_type'],
-                                entry['asset_name'],
-                                entry['amount'],
-                                entry['fee'],
-                                entry['confirmations'],
-                                entry['time'],
-                                entry.get('asset_type'),
-                                entry.get('asset_message'),
-                                entry['vout'],
-                                entry['trusted'],
-                                entry['bip125_replaceable'],
-                                entry['abandoned']
+                    for entry in entries:
+                        # Store transaction entry
+                        await conn.execute(
+                            '''
+                            INSERT INTO transaction_entries (
+                                tx_hash, address, entry_type, asset_name,
+                                amount, fee, confirmations, time,
+                                asset_type, asset_message, vout,
+                                trusted, bip125_replaceable, abandoned,
+                                updated_at
                             )
-                            
-                            # Check if this is a listing deposit
-                            if entry['entry_type'] == 'receive':
-                                try:
-                                    # Look up listing by deposit address
-                                    listing = await self.listing_manager.get_listing_by_deposit_address(
-                                        entry['address']
-                                    )
-                                    
-                                    # Record listing transaction
-                                    await conn.execute(
-                                        '''
-                                        INSERT INTO listing_transactions (
-                                            tx_hash, listing_id, asset_name,
-                                            amount, tx_type, confirmations,
-                                            status
-                                        )
-                                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                                        ON CONFLICT (tx_hash, listing_id, asset_name)
-                                        DO UPDATE SET
-                                            amount = $4,
-                                            confirmations = $6,
-                                            updated_at = now()
-                                        ''',
-                                        tx_hash,
-                                        listing['id'],
-                                        entry['asset_name'],
-                                        entry['amount'],
-                                        'deposit',
-                                        confirmations,
-                                        'pending'
-                                    )
-                                    
-                                    # Update pending balance
-                                    await self.listing_manager.update_listing_balance(
-                                        listing_id=listing['id'],
-                                        asset_name=entry['asset_name'],
-                                        pending_delta=entry['amount']
-                                    )
-                                    
-                                    logger.info(
-                                        f"Recorded deposit for listing {listing['id']}: "
-                                        f"{entry['amount']} {entry['asset_name']} "
-                                        f"(tx: {tx_hash}, confirmations: {confirmations})"
-                                    )
-                                    
-                                except Exception as e:
-                                    # Not a listing deposit, ignore
-                                    logger.debug(
-                                        f"Address {entry['address']} not associated with "
-                                        f"any listing: {e}"
-                                    )
+                            VALUES (
+                                $1, $2, $3, $4, $5, $6, $7, $8,
+                                $9, $10, $11, $12, $13, $14, now()
+                            )
+                            ON CONFLICT (tx_hash, address, entry_type, asset_name)
+                            DO UPDATE SET
+                                amount = $5,
+                                fee = $6,
+                                confirmations = $7,
+                                time = $8,
+                                asset_type = $9,
+                                asset_message = $10,
+                                vout = $11,
+                                trusted = $12,
+                                bip125_replaceable = $13,
+                                abandoned = $14,
+                                updated_at = now()
+                            ''',
+                            entry['tx_hash'],
+                            entry['address'],
+                            entry['entry_type'],
+                            entry['asset_name'],
+                            entry['amount'],
+                            entry['fee'],
+                            entry['confirmations'],
+                            entry['time'],
+                            entry.get('asset_type'),
+                            entry.get('asset_message'),
+                            entry['vout'],
+                            entry['trusted'],
+                            entry['bip125_replaceable'],
+                            entry['abandoned']
+                        )
                 
                 # Enhanced logging for all entries
                 for entry in entries:
