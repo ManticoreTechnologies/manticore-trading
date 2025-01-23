@@ -8,6 +8,9 @@ A high-performance backend service for real-time blockchain monitoring and tradi
 - Wallet transaction tracking with confirmation status
 - Asset transaction support (transfers, new assets, etc.)
 - Per-address transaction entry tracking
+- Trading platform with listings and deposits
+- Multi-asset pricing support
+- Balance tracking per listing and address
 - High-performance CockroachDB storage
 - Clean architecture with modular design
 - Robust error handling and graceful shutdown
@@ -39,7 +42,7 @@ The service is built with three main components:
 - Schema versioning and migrations
 - Connection pooling
 - Transaction management
-- Balance tracking per address
+- Balance tracking per listing
 - Asset holdings tracking
 - See [Database Documentation](database/README.md)
 
@@ -97,7 +100,9 @@ The service is built with three main components:
 
 ## Data Model
 
-### Blocks Table
+### Core Tables
+
+#### Blocks Table
 ```sql
 CREATE TABLE blocks (
     hash STRING PRIMARY KEY,
@@ -107,7 +112,7 @@ CREATE TABLE blocks (
 );
 ```
 
-### Transaction Entries Table
+#### Transaction Entries Table
 ```sql
 CREATE TABLE transaction_entries (
     tx_hash STRING,
@@ -127,6 +132,78 @@ CREATE TABLE transaction_entries (
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now(),
     PRIMARY KEY (tx_hash, address, entry_type, asset_name)
+);
+```
+
+### Trading Platform Tables
+
+#### Listings Table
+```sql
+CREATE TABLE listings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    seller_address STRING NOT NULL,
+    name STRING NOT NULL,
+    description STRING,
+    image_ipfs_hash STRING,
+    status STRING NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+```
+
+#### Listing Prices Table
+```sql
+CREATE TABLE listing_prices (
+    listing_id UUID NOT NULL REFERENCES listings(id),
+    asset_name STRING NOT NULL,
+    price_evr DECIMAL(24,8),  -- Price in EVR
+    price_asset_name STRING,   -- Or price in another asset
+    price_asset_amount DECIMAL(24,8),
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name)
+);
+```
+
+#### Listing Addresses Table
+```sql
+CREATE TABLE listing_addresses (
+    listing_id UUID NOT NULL REFERENCES listings(id),
+    deposit_address STRING NOT NULL,
+    asset_name STRING NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name),
+    UNIQUE INDEX listing_addresses_by_address (deposit_address)
+);
+```
+
+#### Listing Balances Table
+```sql
+CREATE TABLE listing_balances (
+    listing_id UUID NOT NULL REFERENCES listings(id),
+    asset_name STRING NOT NULL,
+    confirmed_balance DECIMAL(24,8) NOT NULL DEFAULT 0,
+    pending_balance DECIMAL(24,8) NOT NULL DEFAULT 0,
+    last_confirmed_tx_hash STRING,
+    last_confirmed_tx_time TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, asset_name)
+);
+```
+
+#### Listing Transactions Table
+```sql
+CREATE TABLE listing_transactions (
+    tx_hash STRING NOT NULL,
+    listing_id UUID NOT NULL REFERENCES listings(id),
+    asset_name STRING NOT NULL,
+    amount DECIMAL(24,8) NOT NULL,
+    tx_type STRING NOT NULL,
+    confirmations INT8 NOT NULL DEFAULT 0,
+    status STRING NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (tx_hash, listing_id, asset_name)
 );
 ```
 
@@ -160,6 +237,65 @@ The service tracks both EVR and asset transactions with detailed information:
 }
 ```
 
+## Trading Platform
+
+The service supports creating and managing listings with multiple assets:
+
+### Creating a Listing
+```json
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "seller_address": "EZekLb2Epp...",
+    "name": "My NFT Collection",
+    "description": "A collection of unique NFTs",
+    "image_ipfs_hash": "Qm...",
+    "prices": [
+        {
+            "asset_name": "NFT1",
+            "price_evr": 100.0
+        },
+        {
+            "asset_name": "NFT2",
+            "price_asset_name": "USDT",
+            "price_asset_amount": 50.0
+        }
+    ]
+}
+```
+
+### Listing Deposits
+Each listing gets unique deposit addresses per asset:
+```json
+{
+    "listing_id": "550e8400-e29b-41d4-a716-446655440000",
+    "deposits": [
+        {
+            "asset_name": "NFT1",
+            "deposit_address": "EbY5su2eyc..."
+        },
+        {
+            "asset_name": "NFT2",
+            "deposit_address": "EZekLb2Epp..."
+        }
+    ]
+}
+```
+
+### Balance Tracking
+The service tracks both confirmed and pending balances:
+```json
+{
+    "listing_id": "550e8400-e29b-41d4-a716-446655440000",
+    "balances": [
+        {
+            "asset_name": "NFT1",
+            "confirmed_balance": 1.0,
+            "pending_balance": 0.5
+        }
+    ]
+}
+```
+
 ## Monitoring
 
 The service provides detailed logging:
@@ -167,6 +303,7 @@ The service provides detailed logging:
 2025-01-22 19:58:14,022 - __main__ - INFO - Starting ZMQ listener and notification processor...
 2025-01-22 19:58:45,210 - __main__ - INFO - Processed block 1166021 (0000000...)
 2025-01-22 19:58:45,721 - __main__ - INFO - Processed receive entry for CREDITS: tx=9dbe85..., address=EbY5su2..., amount=1.00000000, confirmations=0
+2025-01-22 19:58:46,123 - __main__ - INFO - Updated listing balance: listing=550e84..., asset=NFT1, confirmed=1.0
 ```
 
 ## Development
@@ -203,9 +340,10 @@ manticore-trading/
    - Add processing logic
 
 ### Balance Tracking
-The service tracks balances per address and asset:
-- Individual transaction entries for precise history
-- Separate send/receive records
+The service tracks balances at multiple levels:
+- Per-address transaction entries
+- Per-listing asset balances
+- Confirmed vs pending states
 - Asset-specific tracking
 - Confirmation status updates
 - Fee tracking on send operations
@@ -220,6 +358,8 @@ The service handles various error conditions:
 - Schema migration failures
 - Asset operation errors
 - Wallet transaction validation
+- Listing deposit validation
+- Balance reconciliation
 
 ## Contributing
 
