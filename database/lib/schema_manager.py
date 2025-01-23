@@ -1,7 +1,7 @@
 """Database schema management module.
 
 This module handles database schema versioning, validation, and migrations.
-It supports creating and updating tables, indexes, foreign keys, and triggers.
+It supports creating and updating tables, indexes, foreign keys, triggers, and scheduled jobs.
 """
 import importlib
 import logging
@@ -201,6 +201,10 @@ class SchemaManager:
         # Create triggers last since they may depend on functions
         for trigger in schema.get('triggers', []):
             await self._create_trigger(conn, trigger)
+
+        # Create scheduled jobs
+        for job in schema.get('scheduled_jobs', []):
+            await self._create_scheduled_job(conn, job)
             
         # Update schema version
         await conn.execute(
@@ -240,6 +244,50 @@ class SchemaManager:
         # Create triggers last since they may depend on functions
         for trigger in schema.get('triggers', []):
             await self._create_trigger(conn, trigger)
+
+        # Create scheduled jobs
+        for job in schema.get('scheduled_jobs', []):
+            await self._create_scheduled_job(conn, job)
+
+    async def _create_scheduled_job(self, conn, job: Dict[str, Any]) -> None:
+        """Create a scheduled job using CockroachDB Cloud syntax.
+        
+        Args:
+            conn: Database connection
+            job: Job definition dictionary with name, schedule, and sql
+            
+        Note:
+            CockroachDB Cloud only supports specific schedule formats:
+            - '@hourly'
+            - '@daily'
+            - '@weekly'
+            - '@monthly'
+            - '@yearly'
+            - '@every <interval>' where interval is in the format '1h', '1d', etc.
+        """
+        try:
+            # First try to pause any existing schedule with this name
+            try:
+                await conn.execute(f'''
+                    ALTER SCHEDULE {job['name']} PAUSE;
+                ''')
+            except Exception:
+                pass  # Schedule might not exist
+            
+            # Create the new schedule
+            # Note: We use full_schedule_name to avoid name conflicts
+            full_schedule_name = f"{job['name']}_v{self.current_version}"
+            await conn.execute(f'''
+                CREATE SCHEDULE {full_schedule_name}
+                FOR {job['sql']}
+                WHEN CURRENT_DATABASE = current_database()
+                WITH SCHEDULE = '{job['schedule']}'
+            ''')
+            logger.info(f"Created scheduled job {full_schedule_name}")
+        except Exception as e:
+            if 'already exists' not in str(e):
+                raise
+            logger.debug(f"Schedule already exists: {str(e)}")
 
     async def _drop_all_tables(self, conn) -> None:
         """Drop all existing tables in the database.
@@ -303,12 +351,34 @@ class SchemaManager:
             # Combine columns and constraints
             table_def = ', '.join(columns + constraints)
             
-            # Create table
-            await conn.execute(f'''
-                CREATE TABLE {table['name']} (
-                    {table_def}
-                )
-            ''')
+            # Add TTL options if specified
+            options = []
+            if 'options' in table:
+                if 'ttl_expire_after' in table['options']:
+                    options.extend([
+                        f"ttl_expire_after = '{table['options']['ttl_expire_after']}'",
+                        f"ttl_job_cron = '{table['options']['ttl_job_cron']}'"
+                    ])
+                    if 'ttl_select_statement' in table['options']:
+                        options.append(
+                            f"ttl_select_statement = '{table['options']['ttl_select_statement']}'"
+                        )
+
+            # Create table with options if any
+            if options:
+                await conn.execute(f'''
+                    CREATE TABLE {table['name']} (
+                        {table_def}
+                    ) WITH (
+                        {', '.join(options)}
+                    )
+                ''')
+            else:
+                await conn.execute(f'''
+                    CREATE TABLE {table['name']} (
+                        {table_def}
+                    )
+                ''')
             logger.info(f"Created table {table['name']}")
         except Exception as e:
             if 'already exists' not in str(e):

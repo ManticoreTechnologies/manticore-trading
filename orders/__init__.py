@@ -4,10 +4,12 @@ This module handles order creation, validation, and fulfillment.
 It ensures orders have sufficient listing balances and tracks payment status.
 """
 import logging
+import asyncio
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 import traceback
+from datetime import datetime, timedelta
 
 from asyncpg.pool import Pool
 from asyncpg.exceptions import PostgresError
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Default marketplace settings
 DEFAULT_FEE_PERCENT = Decimal('0.01')  # 1% fee
 DEFAULT_FEE_ADDRESS = "EVRFeeAddressGoesHere"  # TODO: Update with actual fee address
+ORDER_EXPIRY_MINUTES = 15  # Orders expire after 15 minutes without payment
 
 class OrderError(Exception):
     """Base class for order-related errors."""
@@ -39,6 +42,91 @@ class InsufficientBalanceError(OrderError):
 class InvalidOrderStatusError(OrderError):
     """Raised when attempting invalid order status transitions."""
     pass
+
+class OrderExpirationMonitor:
+    """Monitors and expires pending orders that have passed their expiration time."""
+    
+    def __init__(self, pool):
+        """Initialize the order expiration monitor.
+        
+        Args:
+            pool: Database connection pool
+        """
+        self.pool = pool
+        self._stop_event = asyncio.Event()
+        self._monitor_task = None
+        
+    async def start(self):
+        """Start the order expiration monitor."""
+        if self._monitor_task is not None:
+            logger.warning("Order expiration monitor already running")
+            return
+            
+        self._stop_event.clear()
+        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        logger.info("Started order expiration monitor")
+        
+    async def stop(self):
+        """Stop the order expiration monitor."""
+        if self._monitor_task is None:
+            return
+            
+        self._stop_event.set()
+        await self._monitor_task
+        self._monitor_task = None
+        logger.info("Stopped order expiration monitor")
+        
+    async def _monitor_loop(self):
+        """Main monitoring loop that checks for and expires pending orders."""
+        while not self._stop_event.is_set():
+            try:
+                async with self.pool.acquire() as conn:
+                    async with conn.transaction():
+                        # First return balances to confirmed state
+                        balance_result = await conn.fetch('''
+                            WITH updated_balances AS (
+                                UPDATE listing_balances lb
+                                SET 
+                                    confirmed_balance = confirmed_balance + oi.amount,
+                                    pending_balance = pending_balance - oi.amount,
+                                    updated_at = now()
+                                FROM orders o
+                                JOIN order_items oi ON oi.order_id = o.id
+                                WHERE o.status = 'pending'
+                                AND o.expires_at < now()
+                                AND o.pending_paid_evr = 0
+                                AND lb.listing_id = o.listing_id
+                                AND lb.asset_name = oi.asset_name
+                                RETURNING lb.listing_id, lb.asset_name, oi.amount
+                            )
+                            SELECT * FROM updated_balances
+                        ''')
+                        
+                        for row in balance_result:
+                            logger.info(
+                                f"Returned {row['amount']} {row['asset_name']} to confirmed "
+                                f"for listing {row['listing_id']} during order expiration"
+                            )
+
+                        # Then update order status to expired
+                        result = await conn.execute('''
+                            UPDATE orders o
+                            SET 
+                                status = 'expired',
+                                updated_at = now()
+                            WHERE status = 'pending'
+                            AND expires_at < now()
+                            AND pending_paid_evr = 0
+                        ''')
+                        
+                        if result != "UPDATE 0":
+                            logger.info(f"Expired {result.split()[1]} pending orders")
+                            
+            except Exception as e:
+                logger.error(f"Error in order expiration monitor: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                
+            await asyncio.sleep(60)  # Check every minute
 
 class OrderManager:
     """Manages order operations and state transitions."""
@@ -70,6 +158,10 @@ class OrderManager:
         Raises:
             InsufficientBalanceError: If listing has insufficient balance
             DatabaseError: If database operation fails
+            
+        Note:
+            Orders automatically expire after ORDER_EXPIRY_MINUTES without payment.
+            Expiration is handled by a database job that runs every minute.
         """
         logger.info(f"Starting order creation for listing {listing_id}")
         
@@ -115,6 +207,7 @@ class OrderManager:
                         '''
                         SELECT 
                             lb.confirmed_balance,
+                            lb.pending_balance,
                             lp.price_evr
                         FROM listing_balances lb
                         JOIN listing_prices lp ON 
@@ -162,36 +255,59 @@ class OrderManager:
                         buyer_address,
                         total_price_evr,
                         fee_evr,
-                        payment_address
-                    ) VALUES ($1, $2, $3, $4, $5)
+                        payment_address,
+                        expires_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
                     RETURNING *
                     ''',
                     listing_id,
                     buyer_address,
                     total_price,
                     fee,
-                    payment_address
+                    payment_address,
+                    datetime.utcnow() + timedelta(minutes=ORDER_EXPIRY_MINUTES)
                 )
                 logger.debug(f"Created order: {order['id']}")
             
-            # Create order items in separate transaction
+            # Create order items and move balances to pending in separate transaction
             async with self.pool.acquire() as conn:
-                for item in order_items:
-                    await conn.execute(
-                        '''
-                        INSERT INTO order_items (
-                            order_id,
-                            asset_name,
-                            amount,
-                            price_evr
-                        ) VALUES ($1, $2, $3, $4)
-                        ''',
-                        order['id'],
-                        item['asset_name'],
-                        item['amount'],
-                        item['price_evr']
-                    )
-                logger.debug("Order items created")
+                async with conn.transaction():
+                    for item in order_items:
+                        # Create order item
+                        await conn.execute(
+                            '''
+                            INSERT INTO order_items (
+                                order_id,
+                                asset_name,
+                                amount,
+                                price_evr
+                            ) VALUES ($1, $2, $3, $4)
+                            ''',
+                            order['id'],
+                            item['asset_name'],
+                            item['amount'],
+                            item['price_evr']
+                        )
+                        
+                        # Move balance to pending
+                        await conn.execute(
+                            '''
+                            UPDATE listing_balances
+                            SET 
+                                confirmed_balance = confirmed_balance - $1,
+                                pending_balance = pending_balance + $1,
+                                updated_at = now()
+                            WHERE listing_id = $2 AND asset_name = $3
+                            ''',
+                            item['amount'],
+                            listing_id,
+                            item['asset_name']
+                        )
+                        logger.info(
+                            f"Moved {item['amount']} {item['asset_name']} to pending "
+                            f"for listing {listing_id} during order creation"
+                        )
+                    logger.debug("Order items created and balances moved to pending")
             
             logger.info(f"Order {order['id']} created successfully")
             return dict(order)
@@ -331,3 +447,32 @@ class OrderManager:
                         ''',
                         order['id']
                     ) 
+
+    async def get_order_balance(self, order_id: UUID) -> Dict[str, Decimal]:
+        """Get balance of an order's payment address.
+        
+        Args:
+            order_id: UUID of order to check
+            
+        Returns:
+            Dict mapping asset names to balances
+            
+        Raises:
+            OrderError: If order not found
+        """
+        async with self.pool.acquire() as conn:
+            order = await conn.fetchrow(
+                'SELECT payment_address FROM orders WHERE id = $1',
+                order_id
+            )
+            
+            if not order:
+                raise OrderError(f"Order {order_id} not found")
+                
+            # Get balance from RPC
+            try:
+                balance = rpc_client.getbalance(order['payment_address'])
+                return {"EVR": Decimal(str(balance))}
+            except Exception as e:
+                logger.error(f"RPC error getting balance: {e}")
+                raise OrderError(f"Failed to get balance: {e}") 
