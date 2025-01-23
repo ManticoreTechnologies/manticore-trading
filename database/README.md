@@ -53,6 +53,25 @@ This module provides a robust database connection and management system specific
 
 ## Schema Management
 
+The database module uses a robust schema versioning system to manage database structure and migrations. The schema version is tracked in a special `schema_version` table that is automatically managed by the `SchemaManager` class.
+
+### Schema Version Table
+
+The `schema_version` table is automatically created and managed by the schema manager. It has the following structure:
+
+```sql
+CREATE TABLE schema_version (
+    version INT8 PRIMARY KEY,
+    applied_at TIMESTAMP NOT NULL DEFAULT now()
+)
+```
+
+This table:
+- Tracks the current schema version number
+- Records when each version was applied
+- Is managed internally by the `SchemaManager`
+- Should never be modified directly or included in schema files
+
 ### Creating Schema Files
 
 Schema files should be placed in the `database/schema/` directory and follow the version naming convention:
@@ -62,30 +81,131 @@ Schema files should be placed in the `database/schema/` directory and follow the
 
 Each schema file must define a `schema` dictionary with:
 - `version`: Schema version number (integer)
-- `tables`: List of table definitions
-- `migrations`: (optional) SQL statements for migrating from previous version
+- `tables`: List of table definitions with their full structure
+- `migrations`: (optional) SQL statements for custom migrations
 
-Example schema file with migrations:
+### Schema Structure
+
+Tables should be defined in order of their dependencies. For example:
+
 ```python
-# database/schema/v2.py
+# database/schema/v1.py
 schema = {
-    'version': 2,
+    'version': 1,
     'tables': [
+        # Parent table first
         {
             'name': 'users',
             'columns': [
                 {'name': 'id', 'type': 'UUID', 'primary_key': True},
                 {'name': 'username', 'type': 'STRING', 'unique': True},
-                {'name': 'email', 'type': 'STRING', 'unique': True},  # New column
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'default': 'now()'}
             ]
+        },
+        # Child table with foreign key reference
+        {
+            'name': 'user_settings',
+            'columns': [
+                {'name': 'user_id', 'type': 'UUID'},
+                {'name': 'setting_key', 'type': 'STRING'},
+                {'name': 'setting_value', 'type': 'STRING'}
+            ],
+            'primary_key': ['user_id', 'setting_key'],
+            'foreign_keys': [
+                {'columns': ['user_id'], 'references': 'users(id)'}
+            ]
         }
-    ],
-    'migrations': [
-        'ALTER TABLE users ADD COLUMN email STRING UNIQUE;'
     ]
 }
 ```
+
+### Migration Process
+
+The schema manager handles migrations in a specific order to ensure consistency:
+
+1. **Table Cleanup**:
+   - Tables are dropped in reverse dependency order
+   - `CASCADE` is used to handle dependent objects
+   - Failures to drop tables are logged but don't stop the migration
+
+2. **Custom Migrations**:
+   - Any SQL in the `migrations` list is executed
+   - Use this for data migrations or complex schema changes
+   - Migrations run in the order specified
+
+3. **Table Creation**:
+   - Tables are created in dependency order
+   - First pass creates tables without foreign keys
+   - Second pass adds foreign key constraints
+   - Finally, indexes are created
+
+4. **Version Tracking**:
+   - Schema version is updated after successful migration
+   - Each version is applied in a single transaction
+
+### Best Practices for Schema Changes
+
+1. **Clean Migrations**:
+   ```python
+   schema = {
+       'version': 2,
+       'tables': [
+           # Define complete table structure
+           {'name': 'users', 'columns': [...]},
+           {'name': 'settings', 'columns': [...]}
+       ],
+       'migrations': [
+           # Optional: Migrate data from old structure
+           '''
+           INSERT INTO new_table (id, data)
+           SELECT id, data FROM old_table;
+           '''
+       ]
+   }
+   ```
+
+2. **Foreign Key Management**:
+   - List tables in dependency order (parents before children)
+   - Use explicit foreign key constraints
+   - Let the schema manager handle the creation order
+
+3. **Index Creation**:
+   ```python
+   'indexes': [
+       {'name': 'users_by_email', 'columns': ['email'], 'unique': True},
+       {'name': 'users_by_created', 'columns': ['created_at DESC']}
+   ]
+   ```
+
+4. **Data Types**:
+   - Use CockroachDB-compatible types
+   - Specify precision for numeric types
+   - Use appropriate string types
+
+5. **Nullable Fields**:
+   ```python
+   'columns': [
+       {'name': 'required_field', 'type': 'STRING', 'nullable': False},
+       {'name': 'optional_field', 'type': 'STRING', 'nullable': True}
+   ]
+   ```
+
+### Handling Schema Updates
+
+When you need to update the schema:
+
+1. Create a new version file with a complete table definition
+2. Include any necessary data migrations in the `migrations` list
+3. Test the migration on a copy of production data
+4. Deploy the new schema version
+
+The schema manager will:
+- Detect the new version
+- Drop existing tables in the correct order
+- Apply any custom migrations
+- Create new tables with the updated structure
+- Add constraints and indexes
+- Update the schema version
 
 ## Connection Pool Management
 
@@ -191,4 +311,5 @@ db_statement_timeout = 30   # Statement timeout in seconds
 2. Test migrations thoroughly before deployment
 3. Use type hints in your database interaction code
 4. Follow the provided examples for connection management
-5. Document any custom SQL functions or indexes in schema files 
+5. Document any custom SQL functions or indexes in schema files
+6. Never modify the `schema_version` table directly - let the schema manager handle it 

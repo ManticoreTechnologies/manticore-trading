@@ -32,8 +32,8 @@ class SchemaManager:
             async with self.pool.acquire() as conn:
                 await conn.execute('''
                     CREATE TABLE IF NOT EXISTS schema_version (
-                        version INTEGER PRIMARY KEY,
-                        applied_at TIMESTAMP DEFAULT now()
+                        version INT8 PRIMARY KEY,
+                        applied_at TIMESTAMP NOT NULL DEFAULT now()
                     )
                 ''')
                 
@@ -117,65 +117,127 @@ class SchemaManager:
         
         try:
             async with self.pool.acquire() as conn:
-                # Apply each version in sequence
-                for version in range(self.current_version + 1, latest_version + 1):
-                    if version not in schema_files:
-                        raise DatabaseSchemaError(
-                            f"Missing schema version {version}"
-                        )
-                    
-                    schema = schema_files[version]
-                    async with conn.transaction():
-                        # Apply migrations if they exist
-                        if 'migrations' in schema:
-                            for sql in schema['migrations']:
-                                await conn.execute(sql)
-                                
-                        # Create/modify tables based on schema
-                        await self._apply_schema_version(conn, schema)
-                        
-                        # Update schema version
-                        await conn.execute(
-                            'INSERT INTO schema_version (version) VALUES ($1)',
-                            version
-                        )
-                        
-                    logger.info(f"Applied schema version {version}")
+                # Drop all existing tables except schema_version
+                await self._drop_all_tables(conn)
+                
+                # Get the latest schema
+                schema = schema_files[latest_version]
+                
+                # Create all tables without foreign keys first
+                for table in schema.get('tables', []):
+                    await self._create_table(conn, table)
+                
+                # Add foreign keys and indexes
+                for table in schema.get('tables', []):
+                    await self._add_constraints(conn, table)
+                
+                # Update schema version
+                await conn.execute(
+                    'INSERT INTO schema_version (version) VALUES ($1)',
+                    latest_version
+                )
+                logger.info(f"Successfully migrated to version {latest_version}")
                     
         except Exception as e:
             logger.error(f"Schema migration failed: {e}")
             raise DatabaseSchemaError(f"Failed to apply schema migrations: {e}")
     
-    async def _apply_schema_version(self, conn, schema: Dict[str, Any]) -> None:
-        """Apply a single schema version.
+    async def _drop_all_tables(self, conn) -> None:
+        """Drop all existing tables in the database.
         
         Args:
             conn: Database connection
-            schema: Schema definition dictionary
         """
-        for table in schema['tables']:
-            columns = []
-            constraints = []
+        try:
+            # Get all tables except schema_version
+            tables = await conn.fetch('''
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name != 'schema_version'
+                ORDER BY table_name DESC
+            ''')
             
-            for col in table['columns']:
-                col_def = f"{col['name']} {col['type']}"
-                
-                if col.get('primary_key'):
-                    constraints.append(f"PRIMARY KEY ({col['name']})")
-                elif col.get('unique'):
-                    constraints.append(f"UNIQUE ({col['name']})")
+            # Drop each table with CASCADE
+            for table in tables:
+                await conn.execute(f'DROP TABLE IF EXISTS {table["table_name"]} CASCADE')
+                logger.info(f"Dropped table {table['table_name']}")
                     
-                if 'default' in col:
-                    col_def += f" DEFAULT {col['default']}"
-                    
-                columns.append(col_def)
-                
-            # Combine columns and constraints
-            table_def = ', '.join(columns + constraints)
+        except Exception as e:
+            logger.error(f"Error during table cleanup: {e}")
+            raise
+    
+    async def _create_table(self, conn, table: Dict[str, Any]) -> None:
+        """Create a single table without foreign keys.
+        
+        Args:
+            conn: Database connection
+            table: Table definition dictionary
+        """
+        columns = []
+        constraints = []
+        
+        for col in table['columns']:
+            col_def = f"{col['name']} {col['type']}"
             
-            # Create table if it doesn't exist
-            await conn.execute(f'''
-                CREATE TABLE IF NOT EXISTS {table['name']} (
-                    {table_def}
+            if col.get('primary_key'):
+                constraints.append(f"PRIMARY KEY ({col['name']})")
+            elif col.get('unique'):
+                constraints.append(f"UNIQUE ({col['name']})")
+                
+            if 'default' in col:
+                col_def += f" DEFAULT {col['default']}"
+                
+            if col.get('nullable') is False:
+                col_def += " NOT NULL"
+                
+            columns.append(col_def)
+            
+        # Add composite primary key if specified
+        if 'primary_key' in table:
+            if isinstance(table['primary_key'], list):
+                constraints.append(
+                    f"PRIMARY KEY ({', '.join(table['primary_key'])})"
                 )
-            ''') 
+            
+        # Combine columns and constraints
+        table_def = ', '.join(columns + constraints)
+        
+        # Create table
+        await conn.execute(f'''
+            CREATE TABLE {table['name']} (
+                {table_def}
+            )
+        ''')
+        logger.info(f"Created table {table['name']}")
+    
+    async def _add_constraints(self, conn, table: Dict[str, Any]) -> None:
+        """Add foreign keys and indexes to a table.
+        
+        Args:
+            conn: Database connection
+            table: Table definition dictionary
+        """
+        # Add foreign key constraints
+        if 'foreign_keys' in table:
+            for fk in table['foreign_keys']:
+                await conn.execute(f'''
+                    ALTER TABLE {table['name']}
+                    ADD CONSTRAINT fk_{table['name']}_{fk['columns'][0]}
+                    FOREIGN KEY ({', '.join(fk['columns'])})
+                    REFERENCES {fk['references']}
+                ''')
+                logger.info(
+                    f"Added foreign key constraint to {table['name']} "
+                    f"referencing {fk['references']}"
+                )
+        
+        # Create indexes
+        if 'indexes' in table:
+            for idx in table['indexes']:
+                unique = 'UNIQUE ' if idx.get('unique') else ''
+                await conn.execute(f'''
+                    CREATE {unique}INDEX {idx['name']} 
+                    ON {table['name']}({', '.join(idx['columns'])})
+                ''')
+                logger.info(f"Created index {idx['name']} on {table['name']}") 

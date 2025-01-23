@@ -1,3 +1,9 @@
 [DEFAULT]
-# Path to Evrmore configuration directory
-evrmore_root = /home/user/.evrmore/
+# Path to Evrmore data directory
+evrmore_root = /home/your_user/.evrmore/
+
+# Database connection URL
+db_url = postgresql://user:pass@host:port/db?sslmode=verify-full
+
+# Minimum confirmations required for listing deposits
+min_confirmations = 6
