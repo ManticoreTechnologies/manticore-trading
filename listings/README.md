@@ -14,6 +14,7 @@ The listings module provides functionality for managing trading platform listing
 - Balance tracking with pending/confirmed states
 - Multi-asset support
 - Price management in EVR or other assets
+- Unique listing address for storing assets
 
 ## Usage
 
@@ -43,6 +44,9 @@ listing = await manager.create_listing(
         }
     ]
 )
+
+# The listing will have a unique listing_address for storing assets
+print(f"Listing address: {listing['listing_address']}")
 ```
 
 ### Updating a Listing
@@ -88,6 +92,7 @@ These fields can be modified by users:
 These fields are managed by the system and cannot be modified directly:
 - `id`
 - `seller_address`
+- `listing_address` (unique address for storing listing assets)
 - `created_at`
 - `updated_at`
 
@@ -105,6 +110,7 @@ These fields are managed by the monitor module:
 {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "seller_address": "EZekLb2Epp...",
+    "listing_address": "EbY5su2eyc...",
     "name": "My NFT Collection",
     "description": "A collection of unique NFTs",
     "image_ipfs_hash": "Qm...",
@@ -163,3 +169,10 @@ await manager.update_listing_balance(
     pending_delta=-1.0,
     tx_hash="9dbe857e8846a84a..."
 ) 
+```
+
+## Listing Address
+
+Each listing has a unique `listing_address` that is automatically generated when the listing is created. This address is used to store all assets that are for sale in the listing. The address is immutable and cannot be changed after creation.
+
+The listing address is separate from the deposit addresses used for individual assets. While deposit addresses are used to receive payments for specific assets, the listing address holds the actual assets being sold.

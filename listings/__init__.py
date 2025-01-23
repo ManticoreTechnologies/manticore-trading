@@ -29,6 +29,7 @@ MUTABLE_FIELDS = {
 SYSTEM_FIELDS = {
     'id',
     'seller_address',
+    'listing_address',
     'created_at',
     'updated_at'
 }
@@ -100,16 +101,19 @@ class ListingManager:
         await self.ensure_pool()
         
         try:
+            # Generate listing address
+            listing_address = getnewaddress()
+            
             # Create the listing in its own transaction
             async with self.pool.acquire() as conn:
                 listing_id = await conn.fetchval(
                     '''
                     INSERT INTO listings (
-                        seller_address, name, description, image_ipfs_hash
-                    ) VALUES ($1, $2, $3, $4)
+                        seller_address, listing_address, name, description, image_ipfs_hash
+                    ) VALUES ($1, $2, $3, $4, $5)
                     RETURNING id
                     ''',
-                    seller_address, name, description, image_ipfs_hash
+                    seller_address, listing_address, name, description, image_ipfs_hash
                 )
             
             # Add prices and addresses if specified

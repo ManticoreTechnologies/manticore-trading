@@ -72,6 +72,10 @@ async def test_create_listing(listing_manager):
     assert "created_at" in listing
     assert "updated_at" in listing
     
+    # Verify listing address
+    assert listing["listing_address"] is not None
+    assert listing["listing_address"].startswith("E")  # EVR address format
+    
     # Verify prices
     assert len(listing["prices"]) == 2
     for i, price in enumerate(listing["prices"]):
@@ -94,6 +98,7 @@ async def test_create_listing(listing_manager):
         assert balance["confirmed_balance"] == 0
         assert balance["pending_balance"] == 0
         assert balance["deposit_address"] == address["deposit_address"]
+        assert balance["deposit_address"].startswith("E")  # EVR address format
 
 @pytest.mark.asyncio
 async def test_get_listing(listing_manager, sample_listing):
@@ -104,6 +109,7 @@ async def test_get_listing(listing_manager, sample_listing):
     # Verify it matches the sample
     assert listing["id"] == sample_listing["id"]
     assert listing["seller_address"] == sample_listing["seller_address"]
+    assert listing["listing_address"] == sample_listing["listing_address"]
     assert listing["name"] == sample_listing["name"]
     assert listing["description"] == sample_listing["description"]
     assert listing["image_ipfs_hash"] == sample_listing["image_ipfs_hash"]
@@ -139,6 +145,7 @@ async def test_update_listing(listing_manager, sample_listing):
     
     # Verify immutable fields haven't changed
     assert updated["seller_address"] == sample_listing["seller_address"]
+    assert updated["listing_address"] == sample_listing["listing_address"]
     assert updated["created_at"] == sample_listing["created_at"]
 
 @pytest.mark.asyncio
@@ -147,7 +154,7 @@ async def test_update_immutable_field(listing_manager, sample_listing):
     with pytest.raises(ListingError):
         await listing_manager.update_listing(
             sample_listing["id"],
-            {"seller_address": "NewAddress"}
+            {"listing_address": "NewAddress"}
         )
 
 @pytest.mark.asyncio
@@ -187,6 +194,7 @@ async def test_get_by_deposit_address(listing_manager, sample_listing):
     
     # Verify it's the same listing
     assert listing["id"] == sample_listing["id"]
+    assert listing["listing_address"] == sample_listing["listing_address"]
 
 @pytest.mark.asyncio
 async def test_delete_listing(listing_manager, sample_listing):
