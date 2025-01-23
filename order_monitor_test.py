@@ -1,4 +1,4 @@
-"""Script to test the monitor module's listing balance tracking functionality."""
+"""Script to test order creation and monitoring with pre-confirmed balances."""
 
 import asyncio
 import logging
@@ -8,6 +8,7 @@ from decimal import Decimal
 from database import init_db, close, get_pool
 from listings import ListingManager
 from monitor import TransactionMonitor
+from orders import OrderManager
 from rpc import client as rpc_client
 
 # Configure logging
@@ -18,29 +19,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main():
-    """Run the monitor test."""
+    """Run the order monitor test."""
     
     # Initialize database and get pool - keep reference to prevent GC
     logger.info("Initializing database connection...")
     await init_db()
     
-    # Create separate pools for monitor and other operations
-    monitor_pool = await get_pool()
-    operations_pool = await get_pool()
+    # Create a single pool for all operations
+    pool = await get_pool()
     
     try:
-        # Create manager instances with operations pool
-        listing_manager = ListingManager(operations_pool)
+        # Create manager instances with the same pool
+        listing_manager = ListingManager(pool)
+        order_manager = OrderManager(pool)
+        monitor = TransactionMonitor(pool)
         
-        # Create monitor with its own pool
-        monitor = TransactionMonitor(monitor_pool)
+        # Start monitor first
+        print("Starting blockchain monitor...")
+        monitor_task = asyncio.create_task(monitor.start())
         
-        # Create a test listing with just CRONOS price
+        # Wait a moment for monitor to initialize
+        await asyncio.sleep(2)
+        
+        # Create a test listing with EVR and asset prices
         logger.info("Creating test listing...")
         listing = await listing_manager.create_listing(
             seller_address="EXS1RtxtkDN1XELcHuQQw3zxYEAEDNs8Hv",
             name="Test Asset Listing", 
-            description="Testing balance tracking",
+            description="Testing order creation and monitoring",
             prices=[
                 {
                     'asset_name': 'CRONOS',
@@ -57,36 +63,51 @@ async def main():
         print(f"Deposit Address: {deposit_address}")
         print("===========================\n")
 
-        # Start the monitor first so we don't miss any transactions
-        print("Starting blockchain monitor...")
-        monitor_task = asyncio.create_task(monitor.start())
+        # Set initial confirmed balance for CRONOS
+        logger.info("Setting initial confirmed balance...")
+        await listing_manager.update_listing_balance(
+            listing_id=listing['id'],
+            asset_name='CRONOS',
+            confirmed_delta=Decimal('2.0'),
+            tx_hash='dummy_tx_hash'
+        )
 
-        # Wait a moment for monitor to initialize
-        await asyncio.sleep(2)
+        # Create the order
+        logger.info("Creating test order...")
+        order = await order_manager.create_order(
+            listing_id=listing['id'],
+            buyer_address="EXS2RtxtkDN1XELcHuQQw3zxYEAEDNs8Hv",  # Test buyer address
+            items=[
+                {
+                    'asset_name': 'CRONOS',
+                    'amount': Decimal('1.0')
+                }
+            ]
+        )
 
-        # Send some CRONOS to the listing
-        logger.info("Sending CRONOS to listing...")
+        print("\n=== Test Order Created ===")
+        print(f"Order ID: {order['id']}")
+        print(f"Total Price: {order['total_price_evr']} EVR")
+        print(f"Payment Address: {order['payment_address']}")
+        print("=========================\n")
+
         try:
-            # The RPC call returns the transaction hash directly
-            tx_hash = rpc_client.transfer("CRONOS", 2.0, deposit_address)
-            if tx_hash:
-                print(f"\nSent 2.0 CRONOS to listing (tx: {tx_hash})")
-                print("Waiting for confirmations...")
-            else:
-                raise Exception("Transfer failed - no transaction hash returned")
-            
-        except Exception as e:
-            logger.error(f"Failed to send CRONOS: {e}")
-            raise
-
-        try:
-            # Keep checking balances until user interrupts
+            # Keep checking balances and order status until user interrupts
             while True:
                 # Check listing balances
                 balances = await listing_manager.get_balances(listing['id'])
                 print(f"\nCurrent Balances for listing {listing['id']}:")
                 for asset, balance in balances.items():
                     print(f"{asset}: Confirmed={balance['confirmed_balance']}, Pending={balance['pending_balance']}")
+                
+                # Check order status
+                order_status = await order_manager.get_order(order['id'])
+                print(f"\nOrder Status:")
+                print(f"Status: {order_status['status']}")
+                if order_status['status'] == 'completed':
+                    print("Order has been fulfilled!")
+                    break
+                
                 await asyncio.sleep(5)
 
         except KeyboardInterrupt:
@@ -101,10 +122,9 @@ async def main():
         logger.error(f"Error in test: {e}")
         raise
     finally:
-        # Cleanup database connections in reverse order
-        logger.info("Closing database connections...")
-        await monitor_pool.close()
-        await operations_pool.close()
+        # Close the single pool
+        logger.info("Closing database connection...")
+        await pool.close()
         await close()
 
 if __name__ == "__main__":

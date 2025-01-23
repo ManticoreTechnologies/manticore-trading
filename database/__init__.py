@@ -80,11 +80,13 @@ async def init_db(db_url: Optional[str] = None) -> None:
         # Create database if needed
         await create_database_if_not_exists(url)
         
-        # Create connection pool
+        # Create connection pool with more conservative settings
         _pool = await asyncpg.create_pool(
             url,
-            min_size=5,
-            max_size=20,
+            min_size=2,
+            max_size=10,
+            max_queries=50000,
+            max_inactive_connection_lifetime=300.0,  # 5 minutes
             init=lambda conn: conn.execute(
                 'SET multiple_active_portals_enabled = true'
             )
@@ -108,7 +110,7 @@ async def get_pool() -> asyncpg.Pool:
         RuntimeError: If pool hasn't been initialized
     """
     if not _pool:
-        raise RuntimeError("Database pool not initialized. Call init_db() first.")
+        await init_db()
     return _pool
 
 async def close() -> None:

@@ -7,12 +7,19 @@ import logging
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
+import traceback
 
 from asyncpg.pool import Pool
+from asyncpg.exceptions import PostgresError
 
 from database.exceptions import DatabaseError
+from rpc import client as rpc_client
 
 logger = logging.getLogger(__name__)
+
+# Default marketplace settings
+DEFAULT_FEE_PERCENT = Decimal('0.01')  # 1% fee
+DEFAULT_FEE_ADDRESS = "EVRFeeAddressGoesHere"  # TODO: Update with actual fee address
 
 class OrderError(Exception):
     """Base class for order-related errors."""
@@ -36,17 +43,13 @@ class InvalidOrderStatusError(OrderError):
 class OrderManager:
     """Manages order operations and state transitions."""
     
-    def __init__(self, pool: Pool, rpc, settings) -> None:
+    def __init__(self, pool: Pool) -> None:
         """Initialize order manager.
         
         Args:
             pool: Database connection pool
-            rpc: RPC client instance
-            settings: Application settings
         """
         self.pool = pool
-        self.rpc = rpc
-        self.settings = settings
         
     async def create_order(
         self,
@@ -68,10 +71,20 @@ class OrderManager:
             InsufficientBalanceError: If listing has insufficient balance
             DatabaseError: If database operation fails
         """
-        async with self.pool.acquire() as conn:
-            # Start transaction
-            async with conn.transaction():
-                # Verify listing exists and get seller info
+        logger.info(f"Starting order creation for listing {listing_id}")
+        
+        # Get payment address before starting transaction
+        try:
+            logger.debug("Getting new payment address from RPC")
+            payment_address = rpc_client.getnewaddress()
+            logger.debug(f"Got payment address: {payment_address}")
+        except Exception as e:
+            logger.error(f"RPC error getting payment address: {e}")
+            raise OrderError(f"Failed to get payment address: {e}")
+
+        try:
+            # First verify listing exists in its own transaction
+            async with self.pool.acquire() as conn:
                 listing = await conn.fetchrow(
                     '''
                     SELECT id, seller_address 
@@ -80,16 +93,22 @@ class OrderManager:
                     ''',
                     listing_id
                 )
-                if not listing:
-                    raise OrderError(f"Listing {listing_id} not found or inactive")
                 
-                # Check balances and get prices for all items
-                total_price = Decimal(0)
-                order_items = []
-                
+            if not listing:
+                raise OrderError(f"Listing {listing_id} not found or inactive")
+            
+            logger.debug(f"Found active listing: {listing['id']}")
+            
+            # Check balances and get prices for all items in separate transaction
+            total_price = Decimal(0)
+            order_items = []
+            
+            async with self.pool.acquire() as conn:
                 for item in items:
                     asset_name = item['asset_name']
                     amount = item['amount']
+                    
+                    logger.debug(f"Checking balance for {asset_name}")
                     
                     # Get current balance and price
                     row = await conn.fetchrow(
@@ -118,6 +137,8 @@ class OrderManager:
                             row['confirmed_balance'],
                             amount
                         )
+                    
+                    logger.debug(f"Balance check passed for {asset_name}")
                         
                     price = row['price_evr'] * amount
                     total_price += price
@@ -127,14 +148,13 @@ class OrderManager:
                         'amount': amount,
                         'price_evr': price
                     })
-                
-                # Calculate fee
-                fee = total_price * Decimal(self.settings['marketplace']['fee_percent'])
-                
-                # Get payment address from RPC
-                payment_address = await self.rpc.getnewaddress()
-                
-                # Create order
+            
+            # Calculate fee
+            fee = total_price * DEFAULT_FEE_PERCENT
+            logger.debug(f"Calculated total price: {total_price} EVR, fee: {fee} EVR")
+            
+            # Create order in its own transaction
+            async with self.pool.acquire() as conn:
                 order = await conn.fetchrow(
                     '''
                     INSERT INTO orders (
@@ -152,8 +172,10 @@ class OrderManager:
                     fee,
                     payment_address
                 )
-                
-                # Create order items
+                logger.debug(f"Created order: {order['id']}")
+            
+            # Create order items in separate transaction
+            async with self.pool.acquire() as conn:
                 for item in order_items:
                     await conn.execute(
                         '''
@@ -169,9 +191,18 @@ class OrderManager:
                         item['amount'],
                         item['price_evr']
                     )
+                logger.debug("Order items created")
+            
+            logger.info(f"Order {order['id']} created successfully")
+            return dict(order)
                 
-                return dict(order)
-                
+        except PostgresError as e:
+            logger.error(f"Database error creating order: {e}")
+            raise DatabaseError(f"Failed to create order: {e}")
+        except Exception as e:
+            logger.error(f"Order creation failed: {e}")
+            raise
+
     async def get_order(self, order_id: UUID) -> Optional[Dict]:
         """Get order details by ID.
         
@@ -244,7 +275,7 @@ class OrderManager:
                         
                         # Send assets to buyer
                         for item in items:
-                            tx_hash = await self.rpc.sendasset(
+                            tx_hash = await rpc_client.sendasset(
                                 item['seller_address'],
                                 order['buyer_address'],
                                 item['asset_name'],
@@ -268,14 +299,14 @@ class OrderManager:
                             
                         # Send EVR payment to seller
                         seller_amount = order['total_price_evr'] - order['fee_evr']
-                        await self.rpc.sendtoaddress(
+                        await rpc_client.sendtoaddress(
                             items[0]['seller_address'],
                             float(seller_amount)
                         )
                         
                         # Send fee to marketplace
-                        await self.rpc.sendtoaddress(
-                            self.settings['marketplace']['fee_address'],
+                        await rpc_client.sendtoaddress(
+                            DEFAULT_FEE_ADDRESS,
                             float(order['fee_evr'])
                         )
                         
