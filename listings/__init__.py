@@ -300,7 +300,7 @@ class ListingManager:
             logger.info(f"Deleted listing {listing_id}")
     
     async def get_listing_by_deposit_address(self, deposit_address: str) -> Dict[str, Any]:
-        """Get a listing by one of its deposit addresses.
+        """Get a listing by its deposit address.
         
         Args:
             deposit_address: The deposit address to look up
@@ -317,8 +317,8 @@ class ListingManager:
             # Get listing ID from deposit address
             listing_id = await conn.fetchval(
                 '''
-                SELECT listing_id 
-                FROM listing_addresses 
+                SELECT id 
+                FROM listings 
                 WHERE deposit_address = $1
                 ''',
                 deposit_address
@@ -504,7 +504,7 @@ class ListingManager:
                 )
                 ON CONFLICT (listing_id, asset_name) DO UPDATE
                 SET 
-                    pending_balance = listing_balances.pending_balance + $3,
+                    pending_balance = GREATEST(0, listing_balances.pending_balance + $3),
                     updated_at = now()
                 RETURNING 
                     listing_id,

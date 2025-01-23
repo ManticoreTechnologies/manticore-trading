@@ -82,8 +82,8 @@ class TransactionMonitor:
                 # Find newly confirmed transactions for listing addresses
                 newly_confirmed = await conn.fetch(
                     '''
-                    WITH newly_confirmed AS (
-                        -- Get transactions that just reached min_confirmations
+                    WITH tx_entries AS (
+                        -- First get all receive entries that just reached min_confirmations
                         SELECT 
                             te.tx_hash,
                             te.address,
@@ -91,25 +91,43 @@ class TransactionMonitor:
                             te.amount,
                             te.confirmations,
                             te.time,
-                            la.listing_id,
-                            la.deposit_address
+                            l.id as listing_id,
+                            l.deposit_address,
+                            -- Count how many receive entries exist for this tx/asset
+                            COUNT(*) OVER (PARTITION BY te.tx_hash, te.asset_name) as receive_count
                         FROM transaction_entries te
-                        JOIN listing_addresses la ON te.address = la.deposit_address
+                        JOIN listings l ON te.address = l.deposit_address
                         WHERE te.confirmations = $1
                         AND te.entry_type = 'receive'
+                    ),
+                    newly_confirmed AS (
+                        -- Then select entries, adjusting amount for self-sends
+                        SELECT DISTINCT ON (tx_hash, asset_name)
+                            tx_hash,
+                            address,
+                            asset_name,
+                            CASE 
+                                WHEN receive_count > 1 THEN amount / receive_count  -- Split amount for self-sends
+                                ELSE amount
+                            END as amount,
+                            confirmations,
+                            time,
+                            listing_id,
+                            deposit_address
+                        FROM tx_entries
+                        ORDER BY tx_hash, asset_name, address
                     )
                     -- Update listing balances
                     UPDATE listing_balances lb
                     SET 
                         confirmed_balance = confirmed_balance + nc.amount,
-                        pending_balance = pending_balance - nc.amount,
+                        pending_balance = GREATEST(0, pending_balance - nc.amount),
                         last_confirmed_tx_hash = nc.tx_hash,
                         last_confirmed_tx_time = nc.time,
                         updated_at = now()
                     FROM newly_confirmed nc
                     WHERE lb.listing_id = nc.listing_id
                     AND lb.asset_name = nc.asset_name
-                    AND lb.deposit_address = nc.deposit_address
                     RETURNING 
                         nc.listing_id,
                         nc.asset_name,
@@ -273,11 +291,27 @@ class TransactionMonitor:
                         # If this is a receive transaction and we haven't processed it before,
                         # check if it's for a listing and update pending balance
                         if entry['entry_type'] == 'receive' and not existing:
+                            # Count how many receive entries exist for this tx/asset
+                            receive_count = await conn.fetchval(
+                                '''
+                                SELECT COUNT(*) 
+                                FROM transaction_entries 
+                                WHERE tx_hash = $1 
+                                AND asset_name = $2 
+                                AND entry_type = 'receive'
+                                ''',
+                                entry['tx_hash'],
+                                entry['asset_name']
+                            )
+                            
+                            # For self-sends, split the amount between receive entries
+                            adjusted_amount = entry['amount'] / receive_count if receive_count > 1 else entry['amount']
+                            
                             # Use listing manager to handle deposit
                             deposit_result = await self.listing_manager.handle_new_deposit(
                                 deposit_address=entry['address'],
-                                asset_name=entry['asset_name'],  # Use the correct asset name from the entry
-                                amount=entry['amount'],
+                                asset_name=entry['asset_name'],
+                                amount=adjusted_amount,
                                 tx_hash=entry['tx_hash']
                             )
                             
@@ -285,7 +319,7 @@ class TransactionMonitor:
                             if deposit_result:
                                 logger.info(
                                     f"Updated listing {deposit_result['listing_id']} pending balance: "
-                                    f"+{entry['amount']} {entry['asset_name']} "  # Use the correct asset name in logging
+                                    f"+{adjusted_amount} {entry['asset_name']} "
                                     f"(new pending={deposit_result['pending_balance']})"
                                 )
                 

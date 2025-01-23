@@ -166,14 +166,50 @@ schema = {
             'function_body': '''
                 BEGIN
                     -- Only handle receive transactions that reach min_confirmations
-                    IF (NEW).entry_type = 'receive' AND (NEW).confirmations >= 6 AND 
-                       ((OLD).confirmations IS NULL OR (OLD).confirmations < 6) THEN
+                    IF (NEW).entry_type = 'receive' AND (NEW).confirmations >= 2 AND 
+                       ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
                         
                         -- Update listing balances for this transaction
                         UPDATE listing_balances lb
                         SET 
-                            confirmed_balance = confirmed_balance + (NEW).amount,
-                            pending_balance = pending_balance - (NEW).amount,
+                            confirmed_balance = confirmed_balance + (
+                                CASE 
+                                    WHEN (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    ) > 1 
+                                    THEN (NEW).amount / (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    )
+                                    ELSE (NEW).amount
+                                END
+                            ),
+                            pending_balance = GREATEST(0, pending_balance - (
+                                CASE 
+                                    WHEN (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    ) > 1 
+                                    THEN (NEW).amount / (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    )
+                                    ELSE (NEW).amount
+                                END
+                            )),
                             last_confirmed_tx_hash = (NEW).tx_hash,
                             last_confirmed_tx_time = (NEW).time,
                             updated_at = now()
