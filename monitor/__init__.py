@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Tuple, Literal
 from datetime import datetime
 from uuid import UUID
+from decimal import Decimal, ROUND_DOWN
 
 from rpc import getblockcount, getblock, getblockhash, getrawtransaction, gettransaction
 from rpc.zmq import subscribe, start, close, ZMQNotification
@@ -22,6 +23,10 @@ from config import load_config
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+def quantize_amount(amount: Decimal) -> Decimal:
+    """Quantize amount to 8 decimal places, rounding down."""
+    return Decimal(str(amount)).quantize(Decimal('0.00000000'), rounding=ROUND_DOWN)
 
 class TransactionMonitor:
     """Monitor blockchain transactions and blocks."""
@@ -160,13 +165,16 @@ class TransactionMonitor:
                 entries = []
                 for detail in wallet_tx.get('details', []):
                     if detail.get('address'):  # Only process if we have an address
+                        # Use Decimal for precise arithmetic
+                        amount = quantize_amount(Decimal(str(abs(detail.get('amount', 0)))))
+                        fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')
                         entries.append({
                             'tx_hash': tx_hash,
                             'address': detail['address'],
                             'entry_type': detail['category'],  # 'send' or 'receive' relative to our wallet
                             'asset_name': 'EVR',  # Regular EVR transaction
-                            'amount': abs(detail.get('amount', 0)),
-                            'fee': fee if detail['category'] == 'send' else 0,  # Fee only on send entries
+                            'amount': amount,
+                            'fee': fee if detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
                             'confirmations': confirmations,
                             'time': time,
                             'vout': detail.get('vout'),
@@ -178,13 +186,16 @@ class TransactionMonitor:
                 # Store entries for asset transactions
                 for asset_detail in wallet_tx.get('asset_details', []):
                     if asset_detail.get('destination'):  # Only process if we have a destination
+                        # Use Decimal for precise arithmetic
+                        amount = quantize_amount(Decimal(str(abs(asset_detail.get('amount', 0)))))
+                        fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')
                         entries.append({
                             'tx_hash': tx_hash,
                             'address': asset_detail['destination'],
                             'entry_type': asset_detail['category'],  # 'send' or 'receive' relative to our wallet
                             'asset_name': asset_detail['asset_name'],
-                            'amount': abs(asset_detail.get('amount', 0)),
-                            'fee': fee if asset_detail['category'] == 'send' else 0,  # Fee only on send entries
+                            'amount': amount,
+                            'fee': fee if asset_detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
                             'confirmations': confirmations,
                             'time': time,
                             'asset_type': asset_detail.get('asset_type'),
@@ -262,42 +273,20 @@ class TransactionMonitor:
                         # If this is a receive transaction and we haven't processed it before,
                         # check if it's for a listing and update pending balance
                         if entry['entry_type'] == 'receive' and not existing:
-                            # Check if this is a listing deposit and update pending balance
-                            listing_rows = await conn.fetch(
-                                '''
-                                WITH listing_deposit AS (
-                                    SELECT 
-                                        la.listing_id,
-                                        la.asset_name,
-                                        la.deposit_address
-                                    FROM listing_addresses la
-                                    WHERE la.deposit_address = $1
-                                    AND la.asset_name = $2
-                                )
-                                UPDATE listing_balances lb
-                                SET 
-                                    pending_balance = pending_balance + $3,
-                                    updated_at = now()
-                                FROM listing_deposit ld
-                                WHERE lb.listing_id = ld.listing_id
-                                AND lb.asset_name = ld.asset_name
-                                AND lb.deposit_address = ld.deposit_address
-                                RETURNING 
-                                    lb.listing_id,
-                                    lb.asset_name,
-                                    lb.pending_balance
-                                ''',
-                                entry['address'],
-                                entry['asset_name'],
-                                entry['amount']
+                            # Use listing manager to handle deposit
+                            deposit_result = await self.listing_manager.handle_new_deposit(
+                                deposit_address=entry['address'],
+                                asset_name=entry['asset_name'],
+                                amount=entry['amount'],
+                                tx_hash=entry['tx_hash']
                             )
-
+                            
                             # Log listing deposits
-                            for row in listing_rows:
+                            if deposit_result:
                                 logger.info(
-                                    f"Updated listing {row['listing_id']} pending balance: "
+                                    f"Updated listing {deposit_result['listing_id']} pending balance: "
                                     f"+{entry['amount']} {entry['asset_name']} "
-                                    f"(new pending={row['pending_balance']})"
+                                    f"(new pending={deposit_result['pending_balance']})"
                                 )
                 
                 # Enhanced logging for all entries

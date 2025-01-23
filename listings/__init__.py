@@ -151,19 +151,6 @@ class ListingManager:
                             asset_name,
                             deposit_address
                         )
-                    
-                    # Initialize balance tracking in its own transaction
-                    async with self.pool.acquire() as conn:
-                        await conn.execute(
-                            '''
-                            INSERT INTO listing_balances (
-                                listing_id, asset_name, deposit_address
-                            ) VALUES ($1, $2, $3)
-                            ''',
-                            listing_id,
-                            asset_name,
-                            deposit_address
-                        )
             
             # Return full listing details
             return await self.get_listing(listing_id)
@@ -503,6 +490,111 @@ class ListingManager:
                 }
                 for row in rows
             }
+
+    async def handle_new_deposit(
+        self,
+        deposit_address: str,
+        asset_name: str,
+        amount: Decimal,
+        tx_hash: str
+    ) -> Optional[Dict[str, Any]]:
+        """Handle a new deposit transaction for a listing.
+        
+        Args:
+            deposit_address: The deposit address that received the transaction
+            asset_name: Name of the asset received
+            amount: Amount received
+            tx_hash: Transaction hash
+            
+        Returns:
+            Dict with listing details if deposit was for a listing, None otherwise
+        """
+        await self.ensure_pool()
+        
+        async with self.pool.acquire() as conn:
+            # First check if we have a listing address entry
+            listing_addr = await conn.fetchrow(
+                '''
+                SELECT listing_id, asset_name, deposit_address
+                FROM listing_addresses
+                WHERE deposit_address = $1
+                ''',
+                deposit_address
+            )
+            
+            if not listing_addr:
+                logger.debug(f"No listing found for deposit address {deposit_address}")
+                return None
+
+            # Check if we need to create a price entry
+            price_exists = await conn.fetchval(
+                '''
+                SELECT EXISTS (
+                    SELECT 1 FROM listing_prices 
+                    WHERE listing_id = $1 AND asset_name = $2
+                )
+                ''',
+                listing_addr['listing_id'],
+                asset_name
+            )
+
+            if not price_exists:
+                # Create price entry with very high default price
+                await conn.execute(
+                    '''
+                    INSERT INTO listing_prices (
+                        listing_id, asset_name, price_evr
+                    ) VALUES ($1, $2, $3)
+                    ''',
+                    listing_addr['listing_id'],
+                    asset_name,
+                    Decimal('999999999999')
+                )
+                logger.info(
+                    f"Created default price entry for listing {listing_addr['listing_id']}, "
+                    f"asset {asset_name} with high default price"
+                )
+                
+            # Insert or update balance
+            listing_rows = await conn.fetch(
+                '''
+                INSERT INTO listing_balances (
+                    listing_id, asset_name, deposit_address, pending_balance,
+                    confirmed_balance
+                ) VALUES (
+                    $1, $2, $3, $4, 0
+                )
+                ON CONFLICT (listing_id, asset_name) DO UPDATE
+                SET 
+                    pending_balance = listing_balances.pending_balance + $4,
+                    updated_at = now()
+                RETURNING 
+                    listing_id,
+                    asset_name,
+                    pending_balance
+                ''',
+                listing_addr['listing_id'],
+                listing_addr['asset_name'],  # Use the asset name from listing_addresses
+                listing_addr['deposit_address'],
+                amount
+            )
+            
+            if listing_rows:
+                # Return first row since there should only be one
+                row = listing_rows[0]
+                logger.info(
+                    f"Updated balance for listing {row['listing_id']}: "
+                    f"asset={row['asset_name']}, "
+                    f"address={deposit_address}, "
+                    f"amount={amount}, "
+                    f"new_pending={row['pending_balance']}"
+                )
+                return {
+                    'listing_id': row['listing_id'],
+                    'asset_name': row['asset_name'],
+                    'pending_balance': row['pending_balance']
+                }
+            return None
 
 # Export public interface
 __all__ = [
