@@ -1,0 +1,3 @@
+[DEFAULT]
+# Path to Evrmore configuration directory
+evrmore_root = /home/user/.evrmore/
