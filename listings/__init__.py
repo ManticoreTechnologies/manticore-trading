@@ -426,6 +426,83 @@ class ListingManager:
             
             # Return updated listing
             return await self.get_listing(listing_id)
+    
+    async def get_deposit_addresses(self, listing_id: Union[str, uuid.UUID]) -> Dict[str, str]:
+        """Get deposit addresses for a listing, keyed by asset name.
+        
+        Args:
+            listing_id: The listing UUID
+            
+        Returns:
+            Dict mapping asset names to deposit addresses
+            
+        Raises:
+            ListingNotFoundError: If listing doesn't exist
+        """
+        await self.ensure_pool()
+        
+        async with self.pool.acquire() as conn:
+            # Check listing exists
+            exists = await conn.fetchval(
+                'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
+                listing_id
+            )
+            if not exists:
+                raise ListingNotFoundError(f"Listing {listing_id} not found")
+            
+            # Get addresses
+            rows = await conn.fetch(
+                'SELECT asset_name, deposit_address FROM listing_addresses WHERE listing_id = $1',
+                listing_id
+            )
+            
+            return {row['asset_name']: row['deposit_address'] for row in rows}
+    
+    async def get_balances(self, listing_id: Union[str, uuid.UUID]) -> Dict[str, Dict[str, Decimal]]:
+        """Get balances for a listing, keyed by asset name.
+        
+        Args:
+            listing_id: The listing UUID
+            
+        Returns:
+            Dict mapping asset names to balance info containing:
+                - confirmed_balance: Confirmed balance
+                - pending_balance: Pending balance
+            
+        Raises:
+            ListingNotFoundError: If listing doesn't exist
+        """
+        await self.ensure_pool()
+        
+        async with self.pool.acquire() as conn:
+            # Check listing exists
+            exists = await conn.fetchval(
+                'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
+                listing_id
+            )
+            if not exists:
+                raise ListingNotFoundError(f"Listing {listing_id} not found")
+            
+            # Get balances
+            rows = await conn.fetch(
+                '''
+                SELECT 
+                    asset_name,
+                    confirmed_balance,
+                    pending_balance
+                FROM listing_balances 
+                WHERE listing_id = $1
+                ''',
+                listing_id
+            )
+            
+            return {
+                row['asset_name']: {
+                    'confirmed_balance': row['confirmed_balance'] or Decimal('0'),
+                    'pending_balance': row['pending_balance'] or Decimal('0')
+                }
+                for row in rows
+            }
 
 # Export public interface
 __all__ = [

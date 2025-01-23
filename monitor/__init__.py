@@ -33,7 +33,7 @@ class TransactionMonitor:
             pool: Database connection pool
             min_confirmations: Minimum number of confirmations for a transaction to be considered confirmed
         """
-        self.pool = pool or get_pool()
+        self.pool = pool  # Will be set in start() if not provided
         self.min_confirmations = min_confirmations
         self.running = True
         self.notification_queue = asyncio.Queue()
@@ -202,6 +202,19 @@ class TransactionMonitor:
                 # Store all entries in database
                 async with self.pool.acquire() as conn:
                     for entry in entries:
+                        # Check if we've already processed this transaction for this address
+                        existing = await conn.fetchrow(
+                            '''
+                            SELECT tx_hash, address, entry_type, asset_name, amount
+                            FROM transaction_entries
+                            WHERE tx_hash = $1 AND address = $2 AND entry_type = $3 AND asset_name = $4
+                            ''',
+                            entry['tx_hash'],
+                            entry['address'],
+                            entry['entry_type'],
+                            entry['asset_name']
+                        )
+
                         # Store transaction entry
                         await conn.execute(
                             '''
@@ -246,8 +259,9 @@ class TransactionMonitor:
                             entry['abandoned']
                         )
 
-                        # If this is a receive transaction, check if it's for a listing and update pending balance
-                        if entry['entry_type'] == 'receive':
+                        # If this is a receive transaction and we haven't processed it before,
+                        # check if it's for a listing and update pending balance
+                        if entry['entry_type'] == 'receive' and not existing:
                             # Check if this is a listing deposit and update pending balance
                             listing_rows = await conn.fetch(
                                 '''
@@ -360,6 +374,11 @@ class TransactionMonitor:
     async def start(self) -> None:
         """Start the blockchain monitoring system."""
         try:
+            # Initialize pool if not provided
+            if self.pool is None:
+                self.pool = await get_pool()
+                self.listing_manager = ListingManager(self.pool)
+            
             # Set up ZMQ subscriptions
             logger.info("Setting up ZMQ subscriptions...")
             subscribe([b"hashblock"], self.handle_block)

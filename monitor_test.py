@@ -1,9 +1,7 @@
-"""Test the monitor module's listing balance tracking functionality."""
+"""Script to test the monitor module's listing balance tracking functionality."""
 
 import asyncio
 import logging
-import pytest
-import pytest_asyncio
 from uuid import UUID
 
 from database import init_db, close
@@ -11,34 +9,26 @@ from listings import ListingManager
 from monitor import TransactionMonitor
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-@pytest_asyncio.fixture
-async def db_pool():
-    """Setup and teardown the database connection pool."""
+async def main():
+    """Run the monitor test."""
+    
+    # Initialize database
+    logger.info("Initializing database connection...")
     await init_db()
-    yield
-    await close()
-
-@pytest_asyncio.fixture
-async def listing_manager(db_pool):
-    """Create and return a ListingManager instance."""
-    return ListingManager()
-
-@pytest_asyncio.fixture
-async def monitor(db_pool):
-    """Create and return a TransactionMonitor instance."""
-    monitor = TransactionMonitor()
-    yield monitor
-    monitor.stop()
-
-@pytest.mark.asyncio
-async def test_real_listing_monitor(listing_manager, monitor):
-    """Create a real listing and monitor its balance updates."""
-
+    
     try:
+        # Create manager instances
+        listing_manager = ListingManager()
+        monitor = TransactionMonitor()
+        
         # Create a test listing with EVR price
+        logger.info("Creating test listing...")
         listing = await listing_manager.create_listing(
             seller_address="EXS1RtxtkDN1XELcHuQQw3zxYEAEDNs8Hv",
             name="Test Asset Listing", 
@@ -87,4 +77,17 @@ async def test_real_listing_monitor(listing_manager, monitor):
             
     except Exception as e:
         logger.error(f"Error in test: {e}")
+        raise
+    finally:
+        # Cleanup database connection
+        logger.info("Closing database connection...")
+        await close()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nTest interrupted by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
         raise 
