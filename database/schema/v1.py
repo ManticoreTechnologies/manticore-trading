@@ -65,7 +65,7 @@ schema = {
             'indexes': [
                 {'name': 'idx_listings_seller', 'columns': ['seller_address']},
                 {'name': 'idx_listings_address', 'columns': ['listing_address'], 'unique': True},
-                {'name': 'idx_listings_deposit', 'columns': ['deposit_address'], 'unique': True}  # Add index for deposit_address
+                {'name': 'idx_listings_deposit', 'columns': ['deposit_address'], 'unique': True}
             ]
         },
         {
@@ -102,62 +102,13 @@ schema = {
             ]
         },
         {
-            'name': 'archived_orders',
-            'columns': [
-                {'name': 'id', 'type': 'UUID', 'primary_key': True},
-                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
-                {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
-                {'name': 'status', 'type': 'TEXT', 'nullable': False},
-                {'name': 'total_price_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'fee_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'payment_address', 'type': 'TEXT', 'nullable': False},
-                {'name': 'confirmed_paid_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'pending_paid_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'last_payment_tx_hash', 'type': 'TEXT'},
-                {'name': 'last_payment_time', 'type': 'TIMESTAMP'},
-                {'name': 'expires_at', 'type': 'TIMESTAMP', 'nullable': False},
-                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False},
-                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False},
-                {'name': 'archived_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
-            ],
-            'indexes': [
-                {'name': 'idx_archived_orders_listing', 'columns': ['listing_id']},
-                {'name': 'idx_archived_orders_created', 'columns': ['created_at']}
-            ]
-        },
-        {
-            'name': 'archived_order_items',
-            'columns': [
-                {'name': 'order_id', 'type': 'UUID', 'nullable': False},
-                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
-                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'fulfillment_tx_hash', 'type': 'TEXT'},
-                {'name': 'fulfillment_time', 'type': 'TIMESTAMP'},
-                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False},
-                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False},
-                {'name': 'archived_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
-            ],
-            'primary_key': ['order_id', 'asset_name'],
-            'indexes': [
-                {'name': 'idx_archived_order_items_created', 'columns': ['created_at']}
-            ]
-        },
-        {
             'name': 'orders',
             'columns': [
                 {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
                 {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
                 {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
-                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
-                {'name': 'total_price_evr', 'type': 'DECIMAL', 'nullable': False},
-                {'name': 'fee_evr', 'type': 'DECIMAL', 'nullable': False},
                 {'name': 'payment_address', 'type': 'TEXT', 'nullable': False},
-                {'name': 'confirmed_paid_evr', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
-                {'name': 'pending_paid_evr', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
-                {'name': 'last_payment_tx_hash', 'type': 'TEXT'},
-                {'name': 'last_payment_time', 'type': 'TIMESTAMP'},
-                {'name': 'expires_at', 'type': 'TIMESTAMP', 'nullable': False},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
                 {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
             ],
@@ -168,13 +119,10 @@ schema = {
                 {'name': 'idx_orders_listing', 'columns': ['listing_id']},
                 {'name': 'idx_orders_buyer', 'columns': ['buyer_address']},
                 {'name': 'idx_orders_status', 'columns': ['status']},
-                {'name': 'idx_orders_payment_address', 'columns': ['payment_address'], 'unique': True},
-                {'name': 'idx_orders_expires_at', 'columns': ['expires_at']}
+                {'name': 'idx_orders_payment_address', 'columns': ['payment_address'], 'unique': True}
             ],
             'checks': [
-                {'name': 'valid_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded', 'expired')"},
-                {'name': 'positive_total_price', 'expression': "total_price_evr > 0"},
-                {'name': 'positive_fee', 'expression': "fee_evr > 0"}
+                {'name': 'valid_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"}
             ]
         },
         {
@@ -184,6 +132,7 @@ schema = {
                 {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
                 {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
                 {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'fee_evr', 'type': 'DECIMAL', 'nullable': False},
                 {'name': 'fulfillment_tx_hash', 'type': 'TEXT'},
                 {'name': 'fulfillment_time', 'type': 'TIMESTAMP'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
@@ -195,7 +144,25 @@ schema = {
             ],
             'checks': [
                 {'name': 'positive_amount', 'expression': "amount > 0"},
-                {'name': 'positive_price', 'expression': "price_evr > 0"}
+                {'name': 'positive_price', 'expression': "price_evr > 0"},
+                {'name': 'positive_fee', 'expression': "fee_evr >= 0"}
+            ]
+        },
+        {
+            'name': 'order_balances',
+            'columns': [
+                {'name': 'order_id', 'type': 'UUID'},
+                {'name': 'asset_name', 'type': 'TEXT'},
+                {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
+                {'name': 'last_confirmed_tx_time', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'primary_key': ['order_id', 'asset_name'],
+            'foreign_keys': [
+                {'columns': ['order_id'], 'references': 'orders(id)'}
             ]
         }
     ],
@@ -205,18 +172,22 @@ schema = {
             'function_name': 'update_listing_balance',
             'table': 'transaction_entries',
             'timing': 'AFTER',
-            'events': ['UPDATE OF confirmations'],
+            'events': ['INSERT', 'UPDATE OF confirmations'],
             'level': 'ROW',
             'function_body': '''
                 BEGIN
-                    -- Only handle receive transactions that reach min_confirmations
-                    IF (NEW).entry_type = 'receive' AND (NEW).confirmations >= 2 AND 
-                       ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
-                        
-                        -- Update listing balances for this transaction
-                        UPDATE listing_balances lb
-                        SET 
-                            confirmed_balance = confirmed_balance + (
+                    -- Handle both new transactions and confirmation updates
+                    IF (NEW).entry_type = 'receive' THEN
+                        -- For new transactions, add to pending balance
+                        IF TG_OP = 'INSERT' THEN
+                            INSERT INTO listing_balances (
+                                listing_id, asset_name, confirmed_balance, pending_balance,
+                                last_confirmed_tx_hash, last_confirmed_tx_time, created_at, updated_at
+                            )
+                            SELECT 
+                                l.id,
+                                (NEW).asset_name,
+                                0,
                                 CASE 
                                     WHEN (
                                         SELECT COUNT(*) 
@@ -233,34 +204,86 @@ schema = {
                                         AND entry_type = 'receive'
                                     )
                                     ELSE (NEW).amount
-                                END
-                            ),
-                            pending_balance = GREATEST(0, pending_balance - (
-                                CASE 
-                                    WHEN (
-                                        SELECT COUNT(*) 
-                                        FROM transaction_entries 
-                                        WHERE tx_hash = (NEW).tx_hash 
-                                        AND asset_name = (NEW).asset_name 
-                                        AND entry_type = 'receive'
-                                    ) > 1 
-                                    THEN (NEW).amount / (
-                                        SELECT COUNT(*) 
-                                        FROM transaction_entries 
-                                        WHERE tx_hash = (NEW).tx_hash 
-                                        AND asset_name = (NEW).asset_name 
-                                        AND entry_type = 'receive'
-                                    )
-                                    ELSE (NEW).amount
-                                END
-                            )),
-                            last_confirmed_tx_hash = (NEW).tx_hash,
-                            last_confirmed_tx_time = (NEW).time,
-                            updated_at = now()
-                        FROM listings l
-                        WHERE l.deposit_address = (NEW).address
-                        AND l.id = lb.listing_id
-                        AND lb.asset_name = (NEW).asset_name;
+                                END,
+                                NULL,
+                                NULL,
+                                now(),
+                                now()
+                            FROM listings l
+                            WHERE l.deposit_address = (NEW).address
+                            ON CONFLICT (listing_id, asset_name) DO UPDATE
+                            SET 
+                                pending_balance = listing_balances.pending_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                updated_at = now();
+
+                        -- For confirmation updates
+                        ELSIF TG_OP = 'UPDATE' AND (NEW).confirmations >= 2 AND ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
+                            UPDATE listing_balances lb
+                            SET 
+                                confirmed_balance = confirmed_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                pending_balance = GREATEST(0, pending_balance - (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                )),
+                                last_confirmed_tx_hash = (NEW).tx_hash,
+                                last_confirmed_tx_time = (NEW).time,
+                                updated_at = now()
+                            FROM listings l
+                            WHERE l.deposit_address = (NEW).address
+                            AND l.id = lb.listing_id
+                            AND lb.asset_name = (NEW).asset_name;
+                        END IF;
                     END IF;
                     
                     RETURN NEW;
@@ -276,100 +299,117 @@ schema = {
             'level': 'ROW',
             'function_body': '''
                 BEGIN
-                    -- Only handle receive transactions to order payment addresses
-                    IF (NEW).entry_type = 'receive' AND (NEW).asset_name = 'EVR' THEN
-                        -- Update order payment tracking
-                        UPDATE orders
-                        SET 
-                            confirmed_paid_evr = CASE 
-                                WHEN (NEW).confirmations >= 6 THEN confirmed_paid_evr + (NEW).amount
-                                ELSE confirmed_paid_evr
-                            END,
-                            pending_paid_evr = CASE 
-                                WHEN (NEW).confirmations >= 6 THEN pending_paid_evr - (NEW).amount
-                                ELSE pending_paid_evr + (NEW).amount
-                            END,
-                            last_payment_tx_hash = (NEW).tx_hash,
-                            last_payment_time = (NEW).time,
-                            status = CASE
-                                WHEN confirmed_paid_evr + CASE 
-                                    WHEN (NEW).confirmations >= 6 THEN (NEW).amount
-                                    ELSE 0
-                                END >= total_price_evr THEN 'paid'
-                                WHEN pending_paid_evr + CASE
-                                    WHEN (NEW).confirmations >= 6 THEN -1 * (NEW).amount
+                    -- Handle both new transactions and confirmation updates
+                    IF (NEW).entry_type = 'receive' THEN
+                        -- For new transactions, add to pending balance
+                        IF TG_OP = 'INSERT' THEN
+                            INSERT INTO order_balances (
+                                order_id, asset_name, confirmed_balance, pending_balance,
+                                last_confirmed_tx_hash, last_confirmed_tx_time, created_at, updated_at
+                            )
+                            SELECT 
+                                o.id,
+                                (NEW).asset_name,
+                                0,
+                                CASE 
+                                    WHEN (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    ) > 1 
+                                    THEN (NEW).amount / (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    )
                                     ELSE (NEW).amount
-                                END > 0 THEN 'partially_paid'
-                                ELSE status
-                            END,
-                            updated_at = now()
-                        WHERE payment_address = (NEW).address;
+                                END,
+                                NULL,
+                                NULL,
+                                now(),
+                                now()
+                            FROM orders o
+                            WHERE o.payment_address = (NEW).address
+                            ON CONFLICT (order_id, asset_name) DO UPDATE
+                            SET 
+                                pending_balance = order_balances.pending_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                updated_at = now();
+
+                        -- For confirmation updates
+                        ELSIF TG_OP = 'UPDATE' AND (NEW).confirmations >= 2 AND ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
+                            UPDATE order_balances ob
+                            SET 
+                                confirmed_balance = confirmed_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                pending_balance = GREATEST(0, pending_balance - (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                )),
+                                last_confirmed_tx_hash = (NEW).tx_hash,
+                                last_confirmed_tx_time = (NEW).time,
+                                updated_at = now()
+                            FROM orders o
+                            WHERE o.payment_address = (NEW).address
+                            AND o.id = ob.order_id
+                            AND ob.asset_name = (NEW).asset_name;
+                        END IF;
                     END IF;
                     
                     RETURN NEW;
-                END;
-            '''
-        },
-        {
-            'name': 'archive_expired_orders_trigger',
-            'function_name': 'archive_expired_orders',
-            'table': 'orders',
-            'timing': 'BEFORE',
-            'events': ['DELETE'],
-            'level': 'ROW',
-            'function_body': '''
-                BEGIN
-                    -- First return balances to confirmed state
-                    UPDATE listing_balances lb
-                    SET 
-                        confirmed_balance = confirmed_balance + oi.amount,
-                        pending_balance = pending_balance - oi.amount,
-                        updated_at = now()
-                    FROM order_items oi
-                    WHERE oi.order_id = (OLD).id
-                    AND lb.listing_id = (OLD).listing_id
-                    AND lb.asset_name = oi.asset_name;
-
-                    -- Archive the order items
-                    INSERT INTO archived_order_items
-                    SELECT 
-                        order_id,
-                        asset_name,
-                        amount,
-                        price_evr,
-                        fulfillment_tx_hash,
-                        fulfillment_time,
-                        created_at,
-                        updated_at,
-                        now() as archived_at
-                    FROM order_items
-                    WHERE order_id = (OLD).id;
-
-                    -- Delete the order items
-                    DELETE FROM order_items WHERE order_id = (OLD).id;
-
-                    -- Archive the order
-                    INSERT INTO archived_orders
-                    SELECT 
-                        id,
-                        listing_id,
-                        buyer_address,
-                        'expired',  -- Force status to expired
-                        total_price_evr,
-                        fee_evr,
-                        payment_address,
-                        confirmed_paid_evr,
-                        pending_paid_evr,
-                        last_payment_tx_hash,
-                        last_payment_time,
-                        expires_at,
-                        created_at,
-                        updated_at,
-                        now() as archived_at
-                    FROM orders
-                    WHERE id = (OLD).id;
-
-                    RETURN OLD;
                 END;
             '''
         }

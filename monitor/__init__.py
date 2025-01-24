@@ -19,6 +19,7 @@ from rpc import getblockcount, getblock, getblockhash, getrawtransaction, gettra
 from rpc.zmq import subscribe, start, close, ZMQNotification
 from database import get_pool
 from listings import ListingManager
+from orders import OrderManager
 from config import load_config
 
 # Configure logging
@@ -43,6 +44,7 @@ class TransactionMonitor:
         self.running = True
         self.notification_queue = asyncio.Queue()
         self.listing_manager = ListingManager(pool)
+        self.order_manager = OrderManager(pool)
         
         # Load config
         config = load_config()
@@ -80,7 +82,7 @@ class TransactionMonitor:
                 )
 
                 # Find newly confirmed transactions for listing addresses
-                newly_confirmed = await conn.fetch(
+                newly_confirmed_listings = await conn.fetch(
                     '''
                     WITH tx_entries AS (
                         -- First get all receive entries that just reached min_confirmations
@@ -99,54 +101,79 @@ class TransactionMonitor:
                         JOIN listings l ON te.address = l.deposit_address
                         WHERE te.confirmations = $1
                         AND te.entry_type = 'receive'
-                    ),
-                    newly_confirmed AS (
-                        -- Then select entries, adjusting amount for self-sends
-                        SELECT DISTINCT ON (tx_hash, asset_name)
-                            tx_hash,
-                            address,
-                            asset_name,
-                            CASE 
-                                WHEN receive_count > 1 THEN amount / receive_count  -- Split amount for self-sends
-                                ELSE amount
-                            END as amount,
-                            confirmations,
-                            time,
-                            listing_id,
-                            deposit_address
-                        FROM tx_entries
-                        ORDER BY tx_hash, asset_name, address
                     )
-                    -- Update listing balances
-                    UPDATE listing_balances lb
-                    SET 
-                        confirmed_balance = confirmed_balance + nc.amount,
-                        pending_balance = GREATEST(0, pending_balance - nc.amount),
-                        last_confirmed_tx_hash = nc.tx_hash,
-                        last_confirmed_tx_time = nc.time,
-                        updated_at = now()
-                    FROM newly_confirmed nc
-                    WHERE lb.listing_id = nc.listing_id
-                    AND lb.asset_name = nc.asset_name
-                    RETURNING 
-                        nc.listing_id,
-                        nc.asset_name,
-                        nc.amount,
-                        nc.tx_hash,
-                        lb.confirmed_balance,
-                        lb.pending_balance
+                    -- Just get the confirmed transactions, no need to update balances
+                    SELECT DISTINCT ON (tx_hash, asset_name)
+                        tx_hash,
+                        address,
+                        asset_name,
+                        CASE 
+                            WHEN receive_count > 1 THEN amount / receive_count  -- Split amount for self-sends
+                            ELSE amount
+                        END as amount,
+                        confirmations,
+                        time,
+                        listing_id,
+                        deposit_address
+                    FROM tx_entries
+                    ORDER BY tx_hash, asset_name, address
                     ''',
                     self.min_confirmations
                 )
 
-                # Log balance updates
-                for update in newly_confirmed:
+                # Find newly confirmed transactions for order addresses
+                newly_confirmed_orders = await conn.fetch(
+                    '''
+                    WITH tx_entries AS (
+                        -- First get all receive entries that just reached min_confirmations
+                        SELECT 
+                            te.tx_hash,
+                            te.address,
+                            te.asset_name,
+                            te.amount,
+                            te.confirmations,
+                            te.time,
+                            o.id as order_id,
+                            o.payment_address,
+                            -- Count how many receive entries exist for this tx/asset
+                            COUNT(*) OVER (PARTITION BY te.tx_hash, te.asset_name) as receive_count
+                        FROM transaction_entries te
+                        JOIN orders o ON te.address = o.payment_address
+                        WHERE te.confirmations = $1
+                        AND te.entry_type = 'receive'
+                    )
+                    -- Just get the confirmed transactions, no need to update balances
+                    SELECT DISTINCT ON (tx_hash, asset_name)
+                        tx_hash,
+                        address,
+                        asset_name,
+                        CASE 
+                            WHEN receive_count > 1 THEN amount / receive_count  -- Split amount for self-sends
+                            ELSE amount
+                        END as amount,
+                        confirmations,
+                        time,
+                        order_id,
+                        payment_address
+                    FROM tx_entries
+                    ORDER BY tx_hash, asset_name, address
+                    ''',
+                    self.min_confirmations
+                )
+
+                # Log only the transaction confirmations
+                for update in newly_confirmed_listings:
                     logger.info(
-                        f"Updated listing {update['listing_id']} balance: "
-                        f"Confirmed {update['amount']} {update['asset_name']} "
-                        f"(tx: {update['tx_hash']}, "
-                        f"new confirmed={update['confirmed_balance']}, "
-                        f"new pending={update['pending_balance']})"
+                        f"Confirmed transaction for listing {update['listing_id']}: "
+                        f"{update['amount']} {update['asset_name']} "
+                        f"(tx: {update['tx_hash']})"
+                    )
+
+                for update in newly_confirmed_orders:
+                    logger.info(
+                        f"Confirmed transaction for order {update['order_id']}: "
+                        f"{update['amount']} {update['asset_name']} "
+                        f"(tx: {update['tx_hash']})"
                     )
             
             logger.info(f"Processed block {block_data['height']} ({block_hash})")
@@ -211,7 +238,7 @@ class TransactionMonitor:
                             'tx_hash': tx_hash,
                             'address': asset_detail['destination'],
                             'entry_type': asset_detail['category'],  # 'send' or 'receive' relative to our wallet
-                            'asset_name': asset_detail['asset_name'],  # Use asset name from asset_details
+                            'asset_name': asset_detail.get('asset_name', 'EVR'),  # Use EVR as default if no asset name
                             'amount': amount,
                             'fee': fee if asset_detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
                             'confirmations': confirmations,
@@ -244,7 +271,7 @@ class TransactionMonitor:
                             entry['asset_name']
                         )
 
-                        # Store transaction entry
+                        # Store transaction entry - triggers will handle balance updates
                         await conn.execute(
                             '''
                             INSERT INTO transaction_entries (
@@ -288,39 +315,44 @@ class TransactionMonitor:
                             entry['abandoned']
                         )
 
-                        # If this is a receive transaction and we haven't processed it before,
-                        # check if it's for a listing and update pending balance
-                        if entry['entry_type'] == 'receive' and not existing:
-                            # Count how many receive entries exist for this tx/asset
-                            receive_count = await conn.fetchval(
+                        # Log transaction processing
+                        if entry['entry_type'] == 'receive':
+                            # Get updated balances after trigger execution
+                            listing_balance = await conn.fetchrow(
                                 '''
-                                SELECT COUNT(*) 
-                                FROM transaction_entries 
-                                WHERE tx_hash = $1 
-                                AND asset_name = $2 
-                                AND entry_type = 'receive'
+                                SELECT l.id as listing_id, lb.pending_balance, lb.confirmed_balance
+                                FROM listing_balances lb
+                                JOIN listings l ON l.id = lb.listing_id
+                                WHERE l.deposit_address = $1 AND lb.asset_name = $2
                                 ''',
-                                entry['tx_hash'],
+                                entry['address'],
                                 entry['asset_name']
                             )
                             
-                            # For self-sends, split the amount between receive entries
-                            adjusted_amount = entry['amount'] / receive_count if receive_count > 1 else entry['amount']
-                            
-                            # Use listing manager to handle deposit
-                            deposit_result = await self.listing_manager.handle_new_deposit(
-                                deposit_address=entry['address'],
-                                asset_name=entry['asset_name'],
-                                amount=adjusted_amount,
-                                tx_hash=entry['tx_hash']
+                            order_balance = await conn.fetchrow(
+                                '''
+                                SELECT o.id as order_id, ob.pending_balance, ob.confirmed_balance
+                                FROM order_balances ob
+                                JOIN orders o ON o.id = ob.order_id
+                                WHERE o.payment_address = $1 AND ob.asset_name = $2
+                                ''',
+                                entry['address'],
+                                entry['asset_name']
                             )
                             
-                            # Log listing deposits
-                            if deposit_result:
+                            if listing_balance:
                                 logger.info(
-                                    f"Updated listing {deposit_result['listing_id']} pending balance: "
-                                    f"+{adjusted_amount} {entry['asset_name']} "
-                                    f"(new pending={deposit_result['pending_balance']})"
+                                    f"Updated listing {listing_balance['listing_id']} balances: "
+                                    f"Asset={entry['asset_name']}, "
+                                    f"Pending={listing_balance['pending_balance']}, "
+                                    f"Confirmed={listing_balance['confirmed_balance']}"
+                                )
+                            elif order_balance:
+                                logger.info(
+                                    f"Updated order {order_balance['order_id']} balances: "
+                                    f"Asset={entry['asset_name']}, "
+                                    f"Pending={order_balance['pending_balance']}, "
+                                    f"Confirmed={order_balance['confirmed_balance']}"
                                 )
                 
                 # Enhanced logging for all entries
@@ -401,6 +433,7 @@ class TransactionMonitor:
             if self.pool is None:
                 self.pool = await get_pool()
                 self.listing_manager = ListingManager(self.pool)
+                self.order_manager = OrderManager(self.pool)
             
             # Set up ZMQ subscriptions
             logger.info("Setting up ZMQ subscriptions...")
