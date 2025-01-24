@@ -1,14 +1,161 @@
 # Database Module
 
-This module manages connections to CockroachDB, schema management, and database operations.
+This module manages connections to CockroachDB and handles database initialization and connection lifecycle.
 
 ## Features
 
-- Connection pooling with asyncpg
-- Robust schema versioning and migration system
-- Automatic balance tracking for listings via triggers
-- Support for multiple assets per listing
-- Comprehensive transaction and block tracking
+- Asynchronous connection pooling with asyncpg
+- Automatic database creation if not exists
+- Schema management through versioning system
+- Conservative connection pool settings
+- Graceful connection handling
+
+## Usage
+
+```python
+from database import init_db, get_pool, close
+
+# Initialize database with URL
+await init_db("postgresql://user:pass@host:26257/dbname")
+
+# Or initialize using settings from config
+await init_db()  # Uses settings_conf.get('db_url')
+
+# Get connection pool
+pool = await get_pool()
+
+# Use pool for queries
+async with pool.acquire() as conn:
+    result = await conn.fetch('SELECT * FROM my_table')
+
+# Close pool when done
+await close()
+```
+
+## Connection Pool Configuration
+
+The module uses conservative pool settings for CockroachDB:
+
+```python
+pool = await asyncpg.create_pool(
+    url,
+    min_size=2,          # Minimum connections
+    max_size=10,         # Maximum connections
+    max_queries=50000,   # Max queries per connection
+    max_inactive_connection_lifetime=300.0,  # 5 minutes
+)
+```
+
+## API Reference
+
+### init_db(db_url: Optional[str] = None)
+Initialize the database connection pool and schema.
+
+```python
+# With explicit URL
+await init_db("postgresql://user:pass@host:26257/dbname")
+
+# Using config settings
+await init_db()
+```
+
+### get_pool() -> asyncpg.Pool
+Get the database connection pool. Initializes the pool if not already done.
+
+```python
+pool = await get_pool()
+```
+
+### close()
+Close the database connection pool gracefully.
+
+```python
+await close()
+```
+
+## Database Creation
+
+The module automatically creates the database if it doesn't exist:
+
+1. Parses the database URL
+2. Connects to 'defaultdb'
+3. Checks if target database exists
+4. Creates database if needed
+
+```python
+await create_database_if_not_exists(db_url)
+```
+
+## Schema Management
+
+Schema management is handled through the SchemaManager class:
+
+```python
+schema_manager = SchemaManager(pool)
+await schema_manager.initialize()
+```
+
+The schema manager is automatically initialized during `init_db()`.
+
+## Error Handling
+
+The module provides detailed error logging for:
+- Database initialization failures
+- Connection pool errors
+- Schema management errors
+- Database creation issues
+
+Example error handling:
+
+```python
+try:
+    await init_db()
+except Exception as e:
+    logger.error(f"Database initialization failed: {e}")
+    raise
+```
+
+## Integration with Config
+
+The module integrates with the config module for database settings:
+
+```python
+from config import settings_conf
+
+db_url = settings_conf.get('db_url')
+```
+
+## Module Dependencies
+
+The database module depends on:
+- `asyncpg`: For async PostgreSQL/CockroachDB connections
+- `config`: For configuration settings
+- `.lib.schema_manager`: For schema management
+
+## Connection Lifecycle
+
+1. **Initialization**
+   - Create database if needed
+   - Initialize connection pool
+   - Set up schema manager
+
+2. **Usage**
+   - Get pool via get_pool()
+   - Acquire connections from pool
+   - Execute queries
+
+3. **Cleanup**
+   - Close pool via close()
+   - Clear global references
+
+## Best Practices
+
+1. Always initialize the database before use
+2. Use the connection pool for all database operations
+3. Close the pool during application shutdown
+4. Handle database errors appropriately
+5. Use transactions for multi-statement operations
+6. Let the schema manager handle schema changes
 
 ## Schema Management
 
@@ -149,45 +296,6 @@ FOR EACH ROW
 EXECUTE FUNCTION update_listing_balance();
 ```
 
-## Usage
-
-### Initialization
-```python
-from database import init_db, get_pool, close
-
-# Initialize database and schema
-await init_db()
-
-# Get connection pool
-pool = get_pool()
-
-# Use pool for queries
-async with pool.acquire() as conn:
-    result = await conn.fetch('SELECT * FROM listings')
-
-# Close pool when shutting down
-await close()
-```
-
-### Schema Updates
-
-To add a new schema version:
-
-1. Create a new file `vX.py` in the schema directory
-2. Define the schema with:
-   - `version`: Schema version number
-   - `tables`: List of table definitions
-   - `triggers`: List of trigger definitions
-
-Example:
-```python
-schema = {
-    'version': 1,
-    'tables': [...],
-    'triggers': [...]
-}
-```
-
 ## CockroachDB Compatibility
 
 The schema is designed to work with CockroachDB Cloud:
@@ -196,22 +304,6 @@ The schema is designed to work with CockroachDB Cloud:
 - Properly handles foreign key constraints
 - Uses triggers for automatic updates
 - Includes appropriate indexes for performance
-
-## Error Handling
-
-The module includes custom exceptions:
-- `DatabaseError`: Base exception for database errors
-- `DatabasePoolError`: Connection pool errors
-- `DatabaseSchemaError`: Schema validation/migration errors
-
-## Best Practices
-
-1. Always use the connection pool
-2. Handle database errors appropriately
-3. Use transactions for multi-statement operations
-4. Add appropriate indexes for queries
-5. Test schema changes thoroughly
-6. Document schema updates in version files
 
 ## Configuration Options
 

@@ -10,6 +10,7 @@ from listings import ListingManager
 from monitor import TransactionMonitor
 from rpc import client as rpc_client
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

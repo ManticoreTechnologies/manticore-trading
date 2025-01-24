@@ -1,6 +1,6 @@
 # Listings Module
 
-The listings module provides functionality for managing trading platform listings, including:
+The listings module provides functionality for managing marketplace listings, including:
 - Creating and managing listings
 - Tracking listing balances
 - Managing deposit addresses
@@ -43,17 +43,26 @@ listing = await manager.create_listing(
         }
     ]
 )
+```
 
-# Get the listing's deposit address for receiving any asset
-deposit_address = await manager.get_deposit_address(listing['id'])
-print(f"Deposit address: {deposit_address}")
+### Getting Listing Details
+
+```python
+# By ID
+listing = await manager.get_listing("550e8400-e29b-41d4-a716-446655440000")
+
+# By deposit address
+listing = await manager.get_listing_by_deposit_address("EUQu16iM6V...")
+
+# Get just the deposit address
+deposit_address = await manager.get_deposit_address("550e8400-e29b-41d4-a716-446655440000")
 ```
 
 ### Checking Balances
 
 ```python
 # Get all balances for a listing
-balances = await manager.get_balances(listing['id'])
+balances = await manager.get_balances(listing_id)
 for asset, balance in balances.items():
     print(f"{asset}:")
     print(f"  Confirmed: {balance['confirmed_balance']}")
@@ -72,13 +81,6 @@ updated = await manager.update_listing(
         "status": "inactive"
     }
 )
-```
-
-### Getting Listing Details
-
-```python
-# By ID
-listing = await manager.get_listing("550e8400-e29b-41d4-a716-446655440000")
 ```
 
 ### Deleting a Listing
@@ -100,8 +102,8 @@ These fields can be modified by users:
 These fields are managed by the system and cannot be modified directly:
 - `id`
 - `seller_address`
-- `listing_address` (unique address for storing listing assets)
-- `deposit_address` (single address for receiving any asset)
+- `listing_address`
+- `deposit_address`
 - `created_at`
 - `updated_at`
 
@@ -139,9 +141,7 @@ These fields are managed by the monitor module:
         {
             "asset_name": "NFT1",
             "confirmed_balance": 1.0,
-            "pending_balance": 0.5,
-            "last_confirmed_tx_hash": "9dbe857e8846a84a...",
-            "last_confirmed_tx_time": "2024-01-23T00:00:00Z"
+            "pending_balance": 0.5
         }
     ]
 }
@@ -160,31 +160,27 @@ Raised when a listing is not found.
 ### InvalidPriceError
 Raised when price specification is invalid.
 
-## Integration with Monitor
+## Database Integration
 
-The listings module provides methods used by the monitor module to track deposits and update balances:
+The module uses an async database pool for all operations. The pool can be provided during initialization or will be automatically retrieved from the database module:
 
 ```python
-# Used by monitor module to handle new deposits
-await manager.handle_new_deposit(
-    deposit_address="EUQu16iM6V...",
-    asset_name="NFT1",
-    amount=1.0,
-    tx_hash="9dbe857e8846a84a..."
-)
+# With custom pool
+manager = ListingManager(pool=my_pool)
 
-# Used by monitor module to update balances
-await manager.update_listing_balance(
-    listing_id="550e8400-e29b-41d4-a716-446655440000",
-    asset_name="NFT1",
-    confirmed_delta=1.0,
-    pending_delta=-1.0,
-    tx_hash="9dbe857e8846a84a..."
-)
+# With default pool
+manager = ListingManager()  # Will get pool from database module
 ```
 
-## Deposit Address
+Each database operation is performed in its own transaction for data consistency. The module handles:
+- Creating listings with associated prices and balance entries
+- Retrieving listings with all related data
+- Updating mutable fields
+- Deleting listings and all associated data in the correct order
 
-Each listing has a single `deposit_address` that is automatically generated when the listing is created. This address is used to receive any asset type that the listing accepts. The monitor module tracks all deposits to this address and updates the appropriate asset balances based on the transaction details.
+## Deposit Address System
 
-The deposit address is immutable and cannot be changed after creation. This ensures consistent tracking of deposits throughout the listing's lifecycle.
+Each listing has a unique deposit address generated at creation time using the `getnewaddress()` RPC call. This address is immutable and stored in the `deposit_address` field. The address can be used to:
+- Receive any supported asset type
+- Look up the associated listing
+- Track deposits and balances

@@ -412,6 +412,57 @@ schema = {
                     RETURN NEW;
                 END;
             '''
+        },
+        {
+            'name': 'update_order_status_trigger',
+            'function_name': 'update_order_status',
+            'table': 'order_balances',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE OF pending_balance, confirmed_balance'],
+            'level': 'ROW',
+            'function_body': '''
+                DECLARE total_payment DECIMAL;
+                DECLARE current_status TEXT;
+                DECLARE new_status TEXT;
+                BEGIN
+                    -- Only process EVR balance changes
+                    IF (NEW).asset_name = 'EVR' THEN
+                        -- Get the total payment required and current status
+                        SELECT 
+                            COALESCE(SUM(price_evr + fee_evr), 0),
+                            o.status 
+                        INTO total_payment, current_status
+                        FROM orders o 
+                        LEFT JOIN order_items oi ON oi.order_id = o.id
+                        WHERE o.id = (NEW).order_id
+                        GROUP BY o.id, o.status;
+
+                        -- Determine new status based on balances
+                        new_status := CASE
+                            -- Fully paid
+                            WHEN (NEW).confirmed_balance >= total_payment THEN 'paid'
+                            -- Partially paid with pending
+                            WHEN (NEW).confirmed_balance > 0 AND (NEW).pending_balance > 0 THEN 'confirming'
+                            -- Partially paid
+                            WHEN (NEW).confirmed_balance > 0 THEN 'partially_paid'
+                            -- Only pending payments
+                            WHEN (NEW).pending_balance > 0 THEN 'confirming'
+                            -- No payments
+                            ELSE 'pending'
+                        END;
+
+                        -- Update order status if changed
+                        IF new_status != current_status THEN
+                            UPDATE orders
+                            SET status = new_status,
+                                updated_at = now()
+                            WHERE id = (NEW).order_id;
+                        END IF;
+                    END IF;
+
+                    RETURN NEW;
+                END;
+            '''
         }
     ]
 }

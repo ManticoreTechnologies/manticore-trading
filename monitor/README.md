@@ -7,30 +7,29 @@ A module for real-time monitoring of blockchain transactions and blocks. This mo
 - Real-time transaction monitoring via ZMQ
 - Block tracking and confirmation updates
 - Support for both EVR and asset transactions
-- Per-address transaction tracking
-- Automatic abandoned transaction handling
+- Listing and order balance tracking
+- Configurable minimum confirmations
 - Detailed logging and error reporting
 
-## Quick Start
+## Usage
 
 ```python
-from database import init_db, get_pool
-from monitor import start_monitoring, stop_monitoring
+from monitor import monitor_transactions
+from database import get_pool
 
 async def main():
-    # Initialize database
-    await init_db()
+    # Get database pool
     pool = await get_pool()
+    
+    # Create monitor instance
+    monitor = monitor_transactions(pool)
     
     try:
         # Start monitoring
-        await start_monitoring(pool)
+        await monitor.start()
     except KeyboardInterrupt:
         # Stop monitoring gracefully
-        stop_monitoring()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        monitor.stop()
 ```
 
 ## Transaction Tracking
@@ -42,11 +41,16 @@ The module tracks transactions with detailed information:
 {
     "tx_hash": "3703abc074ab825c...",
     "address": "EZekLb2Epp...",
-    "entry_type": "send",  // Relative to our wallet
+    "entry_type": "send",
     "asset_name": "EVR",
-    "amount": 0.10000000,
-    "fee": 0.02260000,
-    "confirmations": 1
+    "amount": "0.10000000",
+    "fee": "0.02260000",
+    "confirmations": 1,
+    "time": "2024-01-23T00:00:00Z",
+    "vout": 0,
+    "trusted": true,
+    "bip125_replaceable": false,
+    "abandoned": false
 }
 ```
 
@@ -55,57 +59,112 @@ The module tracks transactions with detailed information:
 {
     "tx_hash": "9dbe857e8846a84a...",
     "address": "EbY5su2eyc...",
-    "entry_type": "receive",  // Relative to our wallet
+    "entry_type": "receive",
     "asset_name": "CREDITS",
-    "amount": 1.00000000,
+    "amount": "1.00000000",
+    "fee": "0.00000000",
+    "confirmations": 0,
+    "time": "2024-01-23T00:00:00Z",
     "asset_type": "transfer_asset",
-    "confirmations": 0
+    "asset_message": "",
+    "vout": 1,
+    "trusted": true,
+    "bip125_replaceable": false,
+    "abandoned": false
 }
 ```
 
 ## Block Tracking
 
-The module tracks blocks and updates transaction confirmations:
+The monitor processes new blocks and updates transaction confirmations:
+
+- Stores block data (hash, height, timestamp)
+- Updates confirmation counts for existing transactions
+- Processes newly confirmed transactions for listings and orders
+- Triggers balance updates when minimum confirmations are reached
+
+## Configuration
+
+The monitor can be configured through the settings file:
 
 ```python
-# Example block data
-{
-    "hash": "000000000022d5c9...",
-    "height": 1166094,
-    "timestamp": 1737597110
-}
+# Default configuration
+min_confirmations = 6  # Minimum confirmations for transaction finality
 ```
 
 ## API Reference
 
-### start_monitoring(pool)
-Start the blockchain monitoring system.
-- `pool`: Database connection pool
+### TransactionMonitor
 
-### stop_monitoring()
-Stop the monitoring system gracefully.
+#### Constructor
+```python
+monitor = TransactionMonitor(pool=None, min_confirmations=6)
+```
+- `pool`: Optional database pool (will get from database module if not provided)
+- `min_confirmations`: Number of confirmations required for transaction finality
 
-### sync_historical_blocks(start_height=None)
+#### Methods
+
+##### start()
+Start the blockchain monitoring system. Sets up ZMQ subscriptions and starts processing notifications.
+
+##### stop()
+Stop the monitoring system gracefully. Closes ZMQ connections.
+
+##### sync_historical_blocks(start_height=None)
 Sync historical blocks from a given height.
 - `start_height`: Optional starting block height (default: 0)
+
+## Database Integration
+
+The monitor integrates with several database tables:
+
+- `blocks`: Stores block data
+- `transaction_entries`: Stores transaction details
+- `listing_balances`: Tracks listing asset balances
+- `order_balances`: Tracks order payment balances
+
+Each transaction entry includes:
+- Transaction details (hash, address, amount, etc.)
+- Asset information for asset transactions
+- Confirmation status
+- BIP125 replaceability status
+- Trust and abandonment status
 
 ## Error Handling
 
 The module handles various error conditions:
-- Node connection issues
-- Invalid transactions
-- Duplicate notifications
-- Database errors
-- ZMQ connection issues
+- Wallet transaction validation
+- Transaction processing errors
+- Block processing errors
+- Database connection issues
+- ZMQ notification handling
 
 ## Logging
 
-The module provides detailed logging:
+The module provides detailed logging for:
+- Block processing
+- Transaction processing
+- Balance updates
+- Error conditions
+- System status
+
+Example log messages:
 ```
-2025-01-22 19:58:14,022 - monitor - INFO - Starting ZMQ listener and notification processor...
-2025-01-22 19:58:45,210 - monitor - INFO - Processed block 1166021 (0000000...)
-2025-01-22 19:58:45,721 - monitor - INFO - Processed receive entry for CREDITS: tx=9dbe85..., address=EbY5su2..., amount=1.00000000, confirmations=0
+INFO: Processed block 1166094 (000000000022d5c9...)
+INFO: Updated listing abc-123 balances: Asset=NFT1, Pending=1.0, Confirmed=0.5
+INFO: Processed receive entry for CREDITS: tx=9dbe85..., address=EbY5su2..., amount=1.00000000
+ERROR: Error processing transaction abc123: Transaction not found in wallet
 ```
+
+## Integration with Other Modules
+
+The monitor integrates with:
+- `listings`: For tracking listing deposits and balances
+- `orders`: For tracking order payments and balances
+- `database`: For persistent storage
+- `rpc`: For blockchain interaction
+- `config`: For configuration management
 
 ## Best Practices
 
