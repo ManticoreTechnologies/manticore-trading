@@ -404,6 +404,124 @@ class ListingManager:
                 for row in rows
             }
 
+    async def search_listings(
+        self,
+        search_term: Optional[str] = None,
+        seller_address: Optional[str] = None,
+        asset_name: Optional[str] = None,
+        min_price_evr: Optional[Decimal] = None,
+        max_price_evr: Optional[Decimal] = None,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Search listings with various filters.
+        
+        Args:
+            search_term: Optional text to search in name and description
+            seller_address: Optional seller address to filter by
+            asset_name: Optional asset name to filter by
+            min_price_evr: Optional minimum EVR price
+            max_price_evr: Optional maximum EVR price
+            status: Optional listing status to filter by
+            limit: Maximum number of results to return (default: 50)
+            offset: Number of results to skip (default: 0)
+            
+        Returns:
+            List of matching listings with their details
+        """
+        await self.ensure_pool()
+        
+        try:
+            # Build the base query
+            query = """
+                SELECT DISTINCT l.*
+                FROM listings l
+                LEFT JOIN listing_prices lp ON l.id = lp.listing_id
+                WHERE 1=1
+            """
+            params = []
+            param_idx = 1
+            
+            # Add search conditions
+            if search_term:
+                query += f" AND (l.name ILIKE ${param_idx} OR l.description ILIKE ${param_idx})"
+                params.append(f"%{search_term}%")
+                param_idx += 1
+                
+            if seller_address:
+                query += f" AND l.seller_address = ${param_idx}"
+                params.append(seller_address)
+                param_idx += 1
+                
+            if asset_name:
+                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND asset_name = ${param_idx})"
+                params.append(asset_name)
+                param_idx += 1
+                
+            if min_price_evr is not None:
+                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr >= ${param_idx})"
+                params.append(min_price_evr)
+                param_idx += 1
+                
+            if max_price_evr is not None:
+                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr <= ${param_idx})"
+                params.append(max_price_evr)
+                param_idx += 1
+                
+            if status:
+                query += f" AND l.status = ${param_idx}"
+                params.append(status)
+                param_idx += 1
+                
+            # Add ordering and pagination
+            query += " ORDER BY l.created_at DESC LIMIT $" + str(param_idx) + " OFFSET $" + str(param_idx + 1)
+            params.extend([limit, offset])
+            
+            logger.debug("Executing search query: %s with params: %r", query, params)
+            
+            async with self.pool.acquire() as conn:
+                try:
+                    # Execute search query
+                    rows = await conn.fetch(query, *params)
+                    logger.debug("Search query returned %d base results", len(rows))
+                    
+                    # Get full listing details for each result
+                    results = []
+                    for row in rows:
+                        try:
+                            listing = dict(row)
+                            
+                            # Get prices
+                            prices = await conn.fetch(
+                                'SELECT * FROM listing_prices WHERE listing_id = $1',
+                                listing['id']
+                            )
+                            listing['prices'] = [dict(p) for p in prices]
+                            
+                            # Get balances
+                            balances = await conn.fetch(
+                                'SELECT * FROM listing_balances WHERE listing_id = $1',
+                                listing['id']
+                            )
+                            listing['balances'] = [dict(b) for b in balances]
+                            
+                            results.append(listing)
+                        except Exception as e:
+                            logger.error("Error getting details for listing %s: %s", row.get('id'), str(e))
+                            continue
+                    
+                    logger.debug("Returning %d listings with full details", len(results))
+                    return results
+                    
+                except Exception as e:
+                    logger.exception("Database error executing search query: %s", str(e))
+                    raise ListingError(f"Database error: {str(e)}")
+                    
+        except Exception as e:
+            logger.exception("Error in search_listings: %s", str(e))
+            raise
+
 # Export public interface
 __all__ = [
     'ListingManager',
