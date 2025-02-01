@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Union, Any
 from decimal import Decimal
 
 from database import get_pool
-from rpc import getnewaddress
+from rpc import getnewaddress, getassetdata, RPCError
 
 logger = logging.getLogger(__name__)
 
@@ -91,17 +91,36 @@ class ListingManager:
                    - price_evr: Optional EVR price
                    - price_asset_name: Optional asset name for pricing
                    - price_asset_amount: Optional asset amount for pricing
+                   - ipfs_hash: Optional IPFS hash for price-specific content
         
         Returns:
             Dict containing the created listing details
         
         Raises:
             ListingError: If creation fails
-            InvalidPriceError: If price specification is invalid
+            InvalidPriceError: If price specification is invalid or asset not found
         """
         await self.ensure_pool()
         
         try:
+            # Validate all asset names first
+            if prices:
+                for price in prices:
+                    asset_name = price['asset_name']
+                    try:
+                        # Get asset data from Evrmore node
+                        asset_data = getassetdata(asset_name)
+                        if asset_data is None:
+                            raise InvalidPriceError(f"Asset not found: {asset_name}")
+                            
+                        # If user didn't provide ipfs_hash, use the one from asset data if available
+                        if not price.get('ipfs_hash') and asset_data.get('ipfs_hash'):
+                            price['ipfs_hash'] = asset_data['ipfs_hash']
+                            
+                    except Exception as e:
+                        logger.error(f"Error validating asset {asset_name}: {e}")
+                        raise InvalidPriceError(f"Failed to validate asset {asset_name}: {str(e)}")
+            
             # Generate listing and deposit addresses
             listing_address = getnewaddress()
             deposit_address = getnewaddress()
@@ -131,14 +150,15 @@ class ListingManager:
                             '''
                             INSERT INTO listing_prices (
                                 listing_id, asset_name, price_evr,
-                                price_asset_name, price_asset_amount
-                            ) VALUES ($1, $2, $3, $4, $5)
+                                price_asset_name, price_asset_amount, ipfs_hash
+                            ) VALUES ($1, $2, $3, $4, $5, $6)
                             ''',
                             listing_id,
                             asset_name,
                             price.get('price_evr'),
                             price.get('price_asset_name'),
-                            price.get('price_asset_amount')
+                            price.get('price_asset_amount'),
+                            price.get('ipfs_hash')
                         )
                     
                     # Initialize balance entry
@@ -157,6 +177,9 @@ class ListingManager:
             # Return full listing details
             return await self.get_listing(listing_id)
             
+        except InvalidPriceError:
+            # Re-raise InvalidPriceError without wrapping
+            raise
         except Exception as e:
             logger.error(f"Error creating listing: {e}")
             raise ListingError(f"Failed to create listing: {e}")
@@ -185,22 +208,45 @@ class ListingManager:
             if not listing:
                 raise ListingNotFoundError(f"Listing {listing_id} not found")
             
-            # Convert to dict
-            result = dict(listing)
+            # Convert to dict and ensure proper JSON serialization
+            result = {
+                'id': str(listing['id']),  # Convert UUID to string
+                'seller_address': listing['seller_address'],
+                'listing_address': listing['listing_address'],
+                'deposit_address': listing['deposit_address'],
+                'name': listing['name'],
+                'description': listing['description'],
+                'image_ipfs_hash': listing['image_ipfs_hash'],
+                'status': listing['status'],
+                'created_at': listing['created_at'].isoformat() if listing['created_at'] else None,
+                'updated_at': listing['updated_at'].isoformat() if listing['updated_at'] else None
+            }
             
             # Get prices
             prices = await conn.fetch(
                 'SELECT * FROM listing_prices WHERE listing_id = $1',
                 listing_id
             )
-            result['prices'] = [dict(p) for p in prices]
+            result['prices'] = [{
+                'asset_name': p['asset_name'],
+                'price_evr': str(p['price_evr']) if p['price_evr'] is not None else None,
+                'price_asset_name': p['price_asset_name'],
+                'price_asset_amount': str(p['price_asset_amount']) if p['price_asset_amount'] is not None else None,
+                'ipfs_hash': p['ipfs_hash']
+            } for p in prices]
             
             # Get balances
             balances = await conn.fetch(
                 'SELECT * FROM listing_balances WHERE listing_id = $1',
                 listing_id
             )
-            result['balances'] = [dict(b) for b in balances]
+            result['balances'] = [{
+                'asset_name': b['asset_name'],
+                'confirmed_balance': str(b['confirmed_balance']) if b['confirmed_balance'] is not None else '0',
+                'pending_balance': str(b['pending_balance']) if b['pending_balance'] is not None else '0',
+                'last_confirmed_tx_hash': b['last_confirmed_tx_hash'],
+                'last_confirmed_tx_time': b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None
+            } for b in balances]
             
             return result
             

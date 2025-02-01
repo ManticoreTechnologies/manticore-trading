@@ -319,6 +319,83 @@ class OrderManager:
                 for row in rows
             }
 
+    async def search_orders(
+        self,
+        buyer_address: Optional[str] = None,
+        listing_id: Optional[UUID] = None,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Search orders with various filters.
+        
+        Args:
+            buyer_address: Optional buyer address to filter by
+            listing_id: Optional listing ID to filter by
+            status: Optional order status to filter by
+            limit: Maximum number of results to return
+            offset: Number of results to skip
+            
+        Returns:
+            List of matching orders with their details
+        """
+        await self.ensure_pool()
+        
+        try:
+            # Build the base query
+            query = """
+                SELECT DISTINCT o.*
+                FROM orders o
+                WHERE 1=1
+            """
+            params = []
+            param_idx = 1
+            
+            # Add search conditions
+            if buyer_address:
+                query += f" AND o.buyer_address = ${param_idx}"
+                params.append(buyer_address)
+                param_idx += 1
+                
+            if listing_id:
+                query += f" AND o.listing_id = ${param_idx}"
+                params.append(listing_id)
+                param_idx += 1
+                
+            if status:
+                query += f" AND o.status = ${param_idx}"
+                params.append(status)
+                param_idx += 1
+                
+            # Add ordering and pagination
+            query += " ORDER BY o.created_at DESC LIMIT $" + str(param_idx) + " OFFSET $" + str(param_idx + 1)
+            params.extend([limit, offset])
+            
+            logger.debug("Executing order search query: %s with params: %r", query, params)
+            
+            async with self.pool.acquire() as conn:
+                # Execute search query
+                rows = await conn.fetch(query, *params)
+                logger.debug("Search query returned %d orders", len(rows))
+                
+                # Get full order details for each result
+                results = []
+                for row in rows:
+                    try:
+                        order = await self.get_order(row['id'])
+                        if order:
+                            results.append(order)
+                    except Exception as e:
+                        logger.error("Error getting details for order %s: %s", row.get('id'), str(e))
+                        continue
+                
+                logger.debug("Returning %d orders with full details", len(results))
+                return results
+                
+        except Exception as e:
+            logger.exception("Error in search_orders: %s", str(e))
+            raise OrderError(f"Failed to search orders: {str(e)}")
+
 # Export public interface
 __all__ = [
     'OrderManager',
