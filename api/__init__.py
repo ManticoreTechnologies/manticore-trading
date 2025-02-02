@@ -11,8 +11,10 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 import json
+import asyncio
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Depends, Query, Response
+from fastapi import FastAPI, HTTPException, Depends, Query, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -21,7 +23,7 @@ from contextlib import asynccontextmanager
 
 from database import get_pool, init_db, close as db_close
 from listings import ListingManager, ListingError, ListingNotFoundError
-from orders import OrderManager, OrderError, InsufficientBalanceError
+from orders import OrderManager, OrderError, InsufficientBalanceError, ORDER_EXPIRATION_MINUTES
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +31,22 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Background task for order expiration
+async def expire_orders_task():
+    """Background task to expire pending orders."""
+    manager = OrderManager()
+    while True:
+        try:
+            # Run expiration check every minute
+            await asyncio.sleep(60)
+            expired_count = await manager.expire_pending_orders()
+            if expired_count > 0:
+                logger.info(f"Expired {expired_count} pending orders")
+        except Exception as e:
+            logger.error(f"Error in order expiration task: {e}")
+            # Don't let the task die, wait and retry
+            await asyncio.sleep(60)
 
 # Lifecycle management
 @asynccontextmanager
@@ -38,10 +56,19 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing API...")
     await init_db()
     
+    # Start order expiration task
+    expiration_task = asyncio.create_task(expire_orders_task())
+    logger.info(f"Started order expiration task (expires after {ORDER_EXPIRATION_MINUTES} minutes)")
+    
     yield
     
     # Shutdown
     logger.info("Shutting down API...")
+    expiration_task.cancel()
+    try:
+        await expiration_task
+    except asyncio.CancelledError:
+        pass
     await db_close()
 
 # Create FastAPI app

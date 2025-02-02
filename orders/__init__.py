@@ -7,6 +7,7 @@ import logging
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
 from uuid import UUID
+from datetime import datetime, timezone, timedelta
 
 from asyncpg.pool import Pool
 from asyncpg.exceptions import PostgresError
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Default marketplace settings
 DEFAULT_FEE_PERCENT = Decimal('0.01')  # 1% fee
 DEFAULT_FEE_ADDRESS = "EVRFeeAddressGoesHere"  # TODO: Update with actual fee address
+ORDER_EXPIRATION_MINUTES = 15  # Orders expire after 15 minutes
 
 class OrderError(Exception):
     """Base class for order-related errors."""
@@ -395,6 +397,43 @@ class OrderManager:
         except Exception as e:
             logger.exception("Error in search_orders: %s", str(e))
             raise OrderError(f"Failed to search orders: {str(e)}")
+
+    async def expire_pending_orders(self) -> int:
+        """Expire pending orders that are older than 15 minutes.
+        
+        Returns:
+            Number of orders expired
+        """
+        await self.ensure_pool()
+        
+        try:
+            # Use timestamptz in the query instead of passing datetime
+            async with self.pool.acquire() as conn:
+                # Update orders that are pending and older than 15 minutes
+                result = await conn.execute(
+                    '''
+                    UPDATE orders 
+                    SET 
+                        status = 'expired',
+                        updated_at = now()
+                    WHERE 
+                        status = 'pending' 
+                        AND created_at < (now() - interval '15 minutes')
+                    '''
+                )
+                
+                # Get number of orders expired
+                expired_count = int(result.split()[-1])
+                if expired_count > 0:
+                    logger.info(f"Expired {expired_count} pending orders older than {ORDER_EXPIRATION_MINUTES} minutes")
+                return expired_count
+                
+        except PostgresError as e:
+            logger.error(f"Database error expiring orders: {e}")
+            raise DatabaseError(f"Failed to expire orders: {e}")
+        except Exception as e:
+            logger.error(f"Error expiring orders: {e}")
+            raise OrderError(f"Failed to expire orders: {e}")
 
 # Export public interface
 __all__ = [
