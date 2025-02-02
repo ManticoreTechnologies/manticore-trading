@@ -129,7 +129,7 @@ class PriceSpec(BaseModel):
     price_asset_name: Optional[str] = Field(None, description="Asset name for pricing")
     price_asset_amount: Optional[Decimal] = Field(None, description="Asset amount for pricing")
     ipfs_hash: Optional[str] = Field(None, description="Optional IPFS hash for price-specific content")
-
+    
 class CreateListing(BaseModel):
     """Request model for creating a new listing"""
     seller_address: str = Field(..., description="Seller's EVR address")
@@ -147,6 +147,13 @@ class CreateOrder(BaseModel):
     """Request model for creating a new order"""
     buyer_address: str = Field(..., description="Buyer's EVR address")
     items: List[OrderItem] = Field(..., description="List of items to order")
+
+class UpdateListing(BaseModel):
+    """Request model for updating a listing"""
+    name: Optional[str] = Field(None, description="New name for the listing")
+    description: Optional[str] = Field(None, description="New description for the listing")
+    image_ipfs_hash: Optional[str] = Field(None, description="New IPFS hash for the listing image")
+    prices: Optional[dict] = Field(None, description="New prices for the listing")
 
 # Dependency for getting managers
 async def get_listing_manager():
@@ -257,13 +264,39 @@ async def search_listings(
 @app.patch("/listings/{listing_id}", tags=["listings"])
 async def update_listing(
     listing_id: UUID,
-    updates: dict,
+    updates: UpdateListing,
     manager: ListingManager = Depends(get_listing_manager)
 ) -> dict:
-    """Update a listing's mutable fields."""
+    """Update a listing's mutable fields and prices."""
     logger.info(f"Updating listing {listing_id} with data: {updates}")
     try:
-        return await manager.update_listing(listing_id, updates)
+        # Convert Pydantic model to dict and remove None values
+        update_data = {k: v for k, v in updates.dict().items() if v is not None}
+        
+        # Handle prices separately from listing fields
+        prices = update_data.pop('prices', None)
+        
+        # Update the listing fields first (if any)
+        result = None
+        if update_data:
+            result = await manager.update_listing(listing_id, update_data)
+            
+        # Handle price updates if provided
+        if prices is not None:
+            # If prices was provided as a list (old format), convert to new format
+            if isinstance(prices, list):
+                prices = {'add_or_update': prices, 'remove': []}
+            
+            result = await manager.update_listing_prices(
+                listing_id=listing_id,
+                add_or_update_prices=prices.get('add_or_update', []),
+                remove_asset_names=prices.get('remove', [])
+            )
+        elif result is None:
+            # If no updates were made, just return current listing
+            result = await manager.get_listing(listing_id)
+            
+        return result
     except ListingNotFoundError:
         raise HTTPException(status_code=404, detail="Listing not found")
     except ListingError as e:
@@ -319,6 +352,90 @@ async def get_listing_by_deposit(
     except Exception as e:
         logger.error(f"Error looking up listing by deposit: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/listings/{listing_id}/prices", tags=["listings"])
+async def get_price_history(
+    listing_id: UUID,
+    asset: Optional[str] = Query(None, description="Filter by specific asset name"),
+    range: str = Query('1M', description="Time range (1D, 1W, 1M, 3M, 1Y, ALL)"),
+    manager: ListingManager = Depends(get_listing_manager)
+) -> List[dict]:
+    """Get price history for a listing or specific asset."""
+    try:
+        # Convert time range to interval
+        interval = {
+            '1D': 'interval \'1 day\'',
+            '1W': 'interval \'7 days\'',
+            '1M': 'interval \'30 days\'',
+            '3M': 'interval \'90 days\'',
+            '1Y': 'interval \'365 days\'',
+            'ALL': None
+        }.get(range.upper())
+
+        async with manager.pool.acquire() as conn:
+            # Build time range condition
+            time_condition = ''
+            if interval:
+                time_condition = f'AND sale_time > (now() - {interval})'
+
+            # Build asset condition
+            asset_condition = ''
+            if asset:
+                asset_condition = 'AND asset_name = $2'
+
+            # Get price history with hourly aggregation for recent data,
+            # daily for older data to optimize performance
+            query = f'''
+                WITH time_buckets AS (
+                    SELECT
+                        CASE
+                            WHEN now() - sale_time < interval '7 days' THEN 
+                                date_trunc('hour', sale_time)
+                            ELSE 
+                                date_trunc('day', sale_time)
+                        END as bucket_time,
+                        asset_name,
+                        listing_id,
+                        price_evr,
+                        amount
+                    FROM sale_history
+                    WHERE listing_id = $1
+                    {asset_condition}
+                    {time_condition}
+                )
+                SELECT
+                    bucket_time as time,
+                    asset_name,
+                    COUNT(*) as num_sales,
+                    MIN(price_evr) as min_price,
+                    MAX(price_evr) as max_price,
+                    AVG(price_evr) as avg_price,
+                    SUM(amount) as volume
+                FROM time_buckets
+                GROUP BY bucket_time, asset_name
+                ORDER BY bucket_time ASC
+            '''
+
+            params = [listing_id]
+            if asset:
+                params.append(asset)
+
+            rows = await conn.fetch(query, *params)
+
+            # Format response
+            return [{
+                'time': row['time'].isoformat(),
+                'asset_name': row['asset_name'],
+                'num_sales': row['num_sales'],
+                'min_price': str(row['min_price']),
+                'max_price': str(row['max_price']),
+                'avg_price': str(row['avg_price']),
+                'volume': str(row['volume'])
+            } for row in rows]
+
+    except Exception as e:
+        logger.error(f"Error getting price history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get price history")
 
 # Order endpoints
 @app.post("/listings/{listing_id}/orders/", tags=["orders"])

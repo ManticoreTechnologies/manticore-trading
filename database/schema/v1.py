@@ -166,6 +166,34 @@ schema = {
             'foreign_keys': [
                 {'columns': ['order_id'], 'references': 'orders(id)'}
             ]
+        },
+        {
+            'name': 'sale_history',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'order_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'seller_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'sale_time', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_sales_listing', 'columns': ['listing_id']},
+                {'name': 'idx_sales_asset', 'columns': ['asset_name']},
+                {'name': 'idx_sales_time', 'columns': ['sale_time']},
+                {'name': 'idx_sales_price', 'columns': ['price_evr']},
+                {'name': 'idx_sales_asset_time', 'columns': ['asset_name', 'sale_time']},
+                {'name': 'idx_sales_listing_time', 'columns': ['listing_id', 'sale_time']},
+                {'name': 'idx_sales_asset_listing', 'columns': ['asset_name', 'listing_id']}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)'},
+                {'columns': ['order_id'], 'references': 'orders(id)'}
+            ]
         }
     ],
     'triggers': [
@@ -462,6 +490,47 @@ schema = {
                         END IF;
                     END IF;
 
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'record_sale_on_order_paid_trigger',
+            'function_name': 'record_sale_on_order_paid',
+            'table': 'orders',
+            'timing': 'AFTER',
+            'events': ['UPDATE OF status'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Only process when status changes to 'paid'
+                    IF (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
+                        -- Insert sale records for each item in the order
+                        INSERT INTO sale_history (
+                            listing_id,
+                            order_id,
+                            asset_name,
+                            amount,
+                            price_evr,
+                            seller_address,
+                            buyer_address,
+                            sale_time
+                        )
+                        SELECT 
+                            o.listing_id,
+                            o.id as order_id,
+                            oi.asset_name,
+                            oi.amount,
+                            oi.price_evr,
+                            l.seller_address,
+                            o.buyer_address,
+                            o.updated_at as sale_time
+                        FROM orders o
+                        JOIN order_items oi ON oi.order_id = o.id
+                        JOIN listings l ON l.id = o.listing_id
+                        WHERE o.id = (NEW).id;
+                    END IF;
+                    
                     RETURN NEW;
                 END;
             '''

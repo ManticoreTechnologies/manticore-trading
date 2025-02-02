@@ -22,7 +22,7 @@ MUTABLE_FIELDS = {
     'name',
     'description',
     'image_ipfs_hash',
-    'status'
+    'tags'
 }
 
 # System-managed fields (not directly mutable by users)
@@ -567,6 +567,167 @@ class ListingManager:
         except Exception as e:
             logger.exception("Error in search_listings: %s", str(e))
             raise
+
+    async def update_listing_prices(
+        self,
+        listing_id: Union[str, uuid.UUID],
+        add_or_update_prices: List[Dict[str, Any]],
+        remove_asset_names: List[str] = None
+    ) -> Dict[str, Any]:
+        """Update, insert, or remove prices for a listing.
+        
+        Args:
+            listing_id: The listing UUID
+            add_or_update_prices: List of price specifications to add or update, each containing:
+                   - asset_name: Name of asset being sold
+                   - price_evr: Optional EVR price
+                   - price_asset_name: Optional asset name for pricing
+                   - price_asset_amount: Optional asset amount for pricing
+                   - ipfs_hash: Optional IPFS hash for price-specific content
+            remove_asset_names: Optional list of asset names to remove pricing for
+        
+        Returns:
+            Updated listing details
+            
+        Raises:
+            ListingNotFoundError: If listing doesn't exist
+            ListingError: If price specification is invalid
+            InvalidPriceError: If price specification is invalid or asset not found
+        """
+        await self.ensure_pool()
+        
+        try:
+            # First verify the listing exists
+            async with self.pool.acquire() as conn:
+                exists = await conn.fetchval(
+                    'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
+                    listing_id
+                )
+                if not exists:
+                    raise ListingNotFoundError(f"Listing {listing_id} not found")
+            
+            # Start transaction for all price updates
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    # Handle removals first
+                    if remove_asset_names:
+                        # Verify assets exist in the listing before removal
+                        existing_assets = await conn.fetch(
+                            '''
+                            SELECT asset_name 
+                            FROM listing_prices 
+                            WHERE listing_id = $1 AND asset_name = ANY($2)
+                            ''',
+                            listing_id,
+                            remove_asset_names
+                        )
+                        existing_asset_names = {row['asset_name'] for row in existing_assets}
+                        
+                        # Check for non-existent assets
+                        invalid_assets = set(remove_asset_names) - existing_asset_names
+                        if invalid_assets:
+                            raise ListingError(f"Cannot remove prices for non-existent assets: {invalid_assets}")
+                        
+                        # Remove prices and balances
+                        await conn.execute(
+                            'DELETE FROM listing_prices WHERE listing_id = $1 AND asset_name = ANY($2)',
+                            listing_id,
+                            remove_asset_names
+                        )
+                        await conn.execute(
+                            'DELETE FROM listing_balances WHERE listing_id = $1 AND asset_name = ANY($2)',
+                            listing_id,
+                            remove_asset_names
+                        )
+                    
+                    # Handle adds/updates
+                    if add_or_update_prices:
+                        # Validate all asset names first
+                        for price in add_or_update_prices:
+                            asset_name = price['asset_name']
+                            try:
+                                # Get asset data from Evrmore node
+                                asset_data = getassetdata(asset_name)
+                                if asset_data is None:
+                                    raise InvalidPriceError(f"Asset not found: {asset_name}")
+                                    
+                                # If user didn't provide ipfs_hash, use the one from asset data if available
+                                if not price.get('ipfs_hash') and asset_data.get('ipfs_hash'):
+                                    price['ipfs_hash'] = asset_data['ipfs_hash']
+                                    
+                                # Validate price specification
+                                price_evr = price.get('price_evr')
+                                price_asset_name = price.get('price_asset_name')
+                                price_asset_amount = price.get('price_asset_amount')
+                                
+                                if price_evr is not None:
+                                    if price_asset_name is not None or price_asset_amount is not None:
+                                        raise InvalidPriceError(
+                                            f"Cannot specify both EVR price and asset price for {asset_name}"
+                                        )
+                                else:
+                                    if bool(price_asset_name) != bool(price_asset_amount):
+                                        raise InvalidPriceError(
+                                            f"Both price_asset_name and price_asset_amount must be provided for {asset_name}"
+                                        )
+                                    if price_asset_name is None:
+                                        raise InvalidPriceError(
+                                            f"Either price_evr or asset price must be specified for {asset_name}"
+                                        )
+                                        
+                            except InvalidPriceError:
+                                raise
+                            except Exception as e:
+                                logger.error(f"Error validating asset {asset_name}: {e}")
+                                raise InvalidPriceError(f"Failed to validate asset {asset_name}: {str(e)}")
+                        
+                        # Update or insert prices
+                        for price in add_or_update_prices:
+                            # Use upsert (INSERT ... ON CONFLICT DO UPDATE) to handle both new and existing prices
+                            await conn.execute(
+                                '''
+                                INSERT INTO listing_prices (
+                                    listing_id, asset_name, price_evr,
+                                    price_asset_name, price_asset_amount, ipfs_hash
+                                ) VALUES ($1, $2, $3, $4, $5, $6)
+                                ON CONFLICT (listing_id, asset_name) DO UPDATE
+                                SET 
+                                    price_evr = EXCLUDED.price_evr,
+                                    price_asset_name = EXCLUDED.price_asset_name,
+                                    price_asset_amount = EXCLUDED.price_asset_amount,
+                                    ipfs_hash = EXCLUDED.ipfs_hash,
+                                    updated_at = now()
+                                ''',
+                                listing_id,
+                                price['asset_name'],
+                                price.get('price_evr'),
+                                price.get('price_asset_name'),
+                                price.get('price_asset_amount'),
+                                price.get('ipfs_hash')
+                            )
+                            
+                            # Ensure we have a balance entry for this asset
+                            await conn.execute(
+                                '''
+                                INSERT INTO listing_balances (
+                                    listing_id, asset_name, confirmed_balance,
+                                    pending_balance
+                                ) VALUES ($1, $2, 0, 0)
+                                ON CONFLICT (listing_id, asset_name) DO NOTHING
+                                ''',
+                                listing_id,
+                                price['asset_name']
+                            )
+            
+            # Return updated listing details
+            return await self.get_listing(listing_id)
+            
+        except (ListingNotFoundError, InvalidPriceError):
+            # Re-raise these exceptions without wrapping
+            raise
+        except Exception as e:
+            logger.error(f"Error updating listing prices: {e}")
+            raise ListingError(f"Failed to update listing prices: {e}")
 
 # Export public interface
 __all__ = [
