@@ -628,14 +628,9 @@ class ListingManager:
                         if invalid_assets:
                             raise ListingError(f"Cannot remove prices for non-existent assets: {invalid_assets}")
                         
-                        # Remove prices and balances
+                        # Remove only price entries, preserve balances
                         await conn.execute(
                             'DELETE FROM listing_prices WHERE listing_id = $1 AND asset_name = ANY($2)',
-                            listing_id,
-                            remove_asset_names
-                        )
-                        await conn.execute(
-                            'DELETE FROM listing_balances WHERE listing_id = $1 AND asset_name = ANY($2)',
                             listing_id,
                             remove_asset_names
                         )
@@ -706,7 +701,7 @@ class ListingManager:
                                 price.get('ipfs_hash')
                             )
                             
-                            # Ensure we have a balance entry for this asset
+                            # Ensure we have a balance entry for this asset if it's new
                             await conn.execute(
                                 '''
                                 INSERT INTO listing_balances (
