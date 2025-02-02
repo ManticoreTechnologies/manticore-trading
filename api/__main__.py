@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from database import init_db, close as db_close, get_pool
 from monitor import monitor_transactions
+from orders import PayoutManager
 
 # Configure logging
 logging.basicConfig(
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Global instances
 monitor = None
+payout_processor = None
 server = None
 should_exit = False
 
@@ -29,7 +31,7 @@ def handle_shutdown(signum, frame):
 
 async def startup():
     """Initialize database and monitor."""
-    global monitor
+    global monitor, payout_processor
     
     logger.info("Initializing database...")
     await init_db()
@@ -39,7 +41,11 @@ async def startup():
     logger.info("Creating blockchain monitor...")
     monitor = monitor_transactions(pool)
     
-    return monitor
+    # Create payout processor
+    logger.info("Creating payout processor...")
+    payout_processor = PayoutManager(pool)
+    
+    return monitor, payout_processor
 
 class UvicornServer:
     """Wrapper for running uvicorn with proper lifecycle management."""
@@ -79,9 +85,18 @@ async def run_monitor(monitor):
         logger.error(f"Monitor error: {e}")
         raise
 
+async def run_payout_processor(processor):
+    """Run the payout processor."""
+    try:
+        logger.info("Starting payout processor task")
+        await processor.process_payouts()
+    except Exception as e:
+        logger.error(f"Payout processor error: {e}")
+        raise
+
 async def main():
-    """Run both the API server and blockchain monitor."""
-    global monitor, server, should_exit
+    """Run the API server, blockchain monitor, and payout processor."""
+    global monitor, payout_processor, server, should_exit
     
     try:
         # Register signal handlers in main thread
@@ -89,15 +104,32 @@ async def main():
         signal.signal(signal.SIGTERM, handle_shutdown)
         
         # Initialize services
-        monitor = await startup()
+        monitor, payout_processor = await startup()
         
-        # Create tasks for both services
-        api_task = asyncio.create_task(run_api())
-        monitor_task = asyncio.create_task(run_monitor(monitor))
+        # Create tasks for all services
+        tasks = [
+            asyncio.create_task(run_api(), name="api"),
+            asyncio.create_task(run_monitor(monitor), name="monitor"),
+            asyncio.create_task(run_payout_processor(payout_processor), name="payout")
+        ]
+        
+        logger.info("All services started")
         
         # Wait for shutdown signal
         while not should_exit:
             await asyncio.sleep(1)
+            
+            # Check if any tasks failed
+            for task in tasks:
+                if task.done() and not task.cancelled():
+                    try:
+                        exc = task.exception()
+                        if exc:
+                            logger.error(f"Task {task.get_name()} failed with error: {exc}")
+                            should_exit = True
+                            break
+                    except asyncio.CancelledError:
+                        pass
             
         # Cleanup started
         logger.info("Starting cleanup...")
@@ -110,9 +142,22 @@ async def main():
             logger.info("Stopping blockchain monitor...")
             monitor.stop()
         
+        if payout_processor:
+            logger.info("Stopping payout processor...")
+            payout_processor.stop()
+        
         if server:
             logger.info("Stopping API server...")
             await server.stop()
+        
+        # Cancel all tasks
+        for task in asyncio.all_tasks():
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         
         logger.info("Closing database connections...")
         await db_close()

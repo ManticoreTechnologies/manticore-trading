@@ -194,6 +194,27 @@ schema = {
                 {'columns': ['listing_id'], 'references': 'listings(id)'},
                 {'columns': ['order_id'], 'references': 'orders(id)'}
             ]
+        },
+        {
+            'name': 'order_payouts',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'order_id', 'type': 'UUID', 'nullable': False, 'unique': True},
+                {'name': 'success', 'type': 'BOOLEAN', 'nullable': False, 'default': 'false'},
+                {'name': 'failure_count', 'type': 'INT8', 'nullable': False, 'default': '0'},
+                {'name': 'total_fees_paid', 'type': 'DECIMAL'},
+                {'name': 'last_attempt_time', 'type': 'TIMESTAMP'},
+                {'name': 'completed_at', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'foreign_keys': [
+                {'columns': ['order_id'], 'references': 'orders(id)'}
+            ],
+            'indexes': [
+                {'name': 'idx_order_payouts_status', 'columns': ['success']},
+                {'name': 'idx_order_payouts_attempt', 'columns': ['last_attempt_time']}
+            ]
         }
     ],
     'triggers': [

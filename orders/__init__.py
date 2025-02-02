@@ -4,6 +4,7 @@ This module handles order creation, validation, and fulfillment.
 It ensures orders have sufficient listing balances and tracks payment status.
 """
 import logging
+import asyncio
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
 from uuid import UUID
@@ -15,13 +16,19 @@ from asyncpg.exceptions import PostgresError
 from database.exceptions import DatabaseError
 from database import get_pool
 from rpc import client as rpc_client
+from config import settings_conf, evrmore_conf
 
 logger = logging.getLogger(__name__)
 
 # Default marketplace settings
 DEFAULT_FEE_PERCENT = Decimal('0.01')  # 1% fee
-DEFAULT_FEE_ADDRESS = "EVRFeeAddressGoesHere"  # TODO: Update with actual fee address
-ORDER_EXPIRATION_MINUTES = 15  # Orders expire after 15 minutes
+DEFAULT_FEE_ADDRESS = settings_conf['fee_address']  # Get fee address from settings
+
+# Load settings from config and convert to proper types
+MAX_PAYOUT_ATTEMPTS = int(settings_conf['max_payout_attempts'])
+PAYOUT_RETRY_DELAY = int(settings_conf['payout_retry_delay'])
+PAYOUT_BATCH_SIZE = int(settings_conf['payout_batch_size'])
+ORDER_EXPIRATION_MINUTES = int(settings_conf['order_expiration_minutes'])
 
 class OrderError(Exception):
     """Base class for order-related errors."""
@@ -44,6 +51,14 @@ class ListingNotFoundError(OrderError):
 
 class AssetNotFoundError(OrderError):
     """Raised when the requested asset is not found in the listing."""
+    pass
+
+class PayoutError(Exception):
+    """Base exception for payout-related errors."""
+    pass
+
+class InsufficientFundsError(PayoutError):
+    """Raised when there are insufficient funds for payout."""
     pass
 
 class OrderManager:
@@ -435,11 +450,330 @@ class OrderManager:
             logger.error(f"Error expiring orders: {e}")
             raise OrderError(f"Failed to expire orders: {e}")
 
+class PayoutManager:
+    """Manages order payouts and fee distribution."""
+    
+    def __init__(self, pool: Optional[Pool] = None):
+        """Initialize payout manager.
+        
+        Args:
+            pool: Optional database connection pool
+        """
+        self.pool = pool
+        self._stop_requested = False
+        
+    async def ensure_pool(self):
+        """Ensure we have a database pool."""
+        if not self.pool:
+            self.pool = await get_pool()
+            
+    def stop(self):
+        """Signal the payout processor to stop."""
+        self._stop_requested = True
+            
+    async def process_payouts(self):
+        """Main payout processing loop.
+        
+        This method runs continuously, processing paid orders and handling payouts
+        to buyers and sellers.
+        """
+        await self.ensure_pool()
+        logger.info("Starting payout processor")
+        
+        while not self._stop_requested:
+            try:
+                # Get batch of paid orders that need processing
+                orders = await self._get_orders_for_payout()
+                
+                if not orders:
+                    # No orders to process, wait before checking again
+                    await asyncio.sleep(60)
+                    continue
+                
+                logger.info(f"Processing payouts for {len(orders)} orders")
+                
+                for order in orders:
+                    try:
+                        # Process each order in its own transaction
+                        async with self.pool.acquire() as conn:
+                            async with conn.transaction():
+                                await self._process_order_payout(conn, order)
+                                
+                    except Exception as e:
+                        logger.error(f"Error processing payout for order {order['id']}: {e}")
+                        # Update failure count and retry time
+                        await self._update_payout_failure(order['id'])
+                        
+            except Exception as e:
+                logger.error(f"Error in payout processor: {e}")
+                await asyncio.sleep(60)  # Wait before retrying
+                
+    async def _get_orders_for_payout(self) -> List[Dict[str, Any]]:
+        """Get paid orders that need payout processing."""
+        async with self.pool.acquire() as conn:
+            # First check if there are any paid orders
+            paid_orders = await conn.fetch(
+                '''
+                SELECT o.*, op.failure_count, op.last_attempt_time
+                FROM orders o
+                LEFT JOIN order_payouts op ON op.order_id = o.id
+                WHERE o.status = $1
+                ''',
+                'paid'
+            )
+            
+            logger.info(f"Found {len(paid_orders)} total paid orders")
+            for order in paid_orders:
+                logger.info(
+                    f"Order {order['id']} status: failures={order['failure_count']}, "
+                    f"last_attempt={order['last_attempt_time']}"
+                )
+            
+            # Get orders eligible for payout with relaxed timing
+            orders = await conn.fetch(
+                '''
+                SELECT o.*, 
+                    COALESCE(op.failure_count, 0) as payout_failures,
+                    op.last_attempt_time
+                FROM orders o
+                LEFT JOIN order_payouts op ON op.order_id = o.id
+                WHERE o.status = 'paid'
+                AND (
+                    op.id IS NULL  -- Never attempted
+                    OR (
+                        op.failure_count < $1  -- Under max attempts
+                        AND (
+                            op.last_attempt_time IS NULL 
+                            OR op.last_attempt_time < now() - interval '1 minute'  -- Reduced from 5 minutes for testing
+                        )
+                    )
+                )
+                ORDER BY o.created_at ASC
+                LIMIT $2
+                ''',
+                MAX_PAYOUT_ATTEMPTS,
+                PAYOUT_BATCH_SIZE
+            )
+            
+            logger.info(f"Found {len(orders)} orders eligible for payout processing")
+            for order in orders:
+                logger.info(
+                    f"Order {order['id']} is eligible for payout "
+                    f"(failures: {order['payout_failures']}, "
+                    f"last_attempt: {order.get('last_attempt_time')})"
+                )
+            
+            return orders
+
+    async def _process_order_payout(self, conn, order: Dict[str, Any]):
+        """Process payout for a single order.
+        
+        Args:
+            conn: Database connection
+            order: Order details
+            
+        Raises:
+            PayoutError: If payout fails
+        """
+        order_id = order['id']
+        logger.info(f"Starting payout process for order {order_id}")
+        
+        # Get order items with listing details
+        items = await conn.fetch(
+            '''
+            SELECT 
+                oi.*,
+                l.seller_address,
+                l.deposit_address,
+                l.id as listing_id
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            JOIN listings l ON l.id = o.listing_id
+            WHERE oi.order_id = $1
+            ''',
+            order_id
+        )
+        
+        if not items:
+            raise PayoutError(f"No items found for order {order_id}")
+            
+        logger.info(f"Processing {len(items)} items for order {order_id}")
+        
+        # Group payments by seller
+        seller_payments = {}
+        for item in items:
+            seller_address = item['seller_address']
+            price_evr = item['price_evr']
+            
+            if seller_address not in seller_payments:
+                seller_payments[seller_address] = Decimal('0')
+            seller_payments[seller_address] += price_evr
+            logger.info(f"Added {price_evr} EVR payment for seller {seller_address}")
+            
+        # Calculate total fees
+        total_fees = sum(item['fee_evr'] for item in items)
+        logger.info(f"Total fees for order {order_id}: {total_fees} EVR")
+        
+        try:
+            # First send assets to buyer
+            for item in items:
+                try:
+                    logger.info(
+                        f"Transferring {item['amount']} {item['asset_name']} "
+                        f"from {item['deposit_address']} to {order['buyer_address']}"
+                    )
+                    
+                    # Validate asset exists
+                    try:
+                        asset_info = rpc_client.getassetdata(item['asset_name'])
+                        logger.info(f"Asset info: {asset_info}")
+                    except Exception as e:
+                        logger.error(f"Failed to get asset data for {item['asset_name']}: {e}")
+                        raise PayoutError(f"Asset {item['asset_name']} not found or invalid")
+
+                    # Validate amount is valid
+                    amount = float(item['amount'])  # Convert to float for RPC
+                    logger.info(f"Attempting transfer with amount: {amount}")
+                    
+                    # Transfer asset from listing's deposit address to buyer using transferfromaddress
+                    # Parameters in exact order from docs:
+                    # 1. asset_name (string)
+                    # 2. from_address (string)
+                    # 3. qty (numeric)
+                    # 4. to_address (string)
+                    # 5. message (string, optional)
+                    # 6. expire_time (numeric, optional)
+                    # 7. evr_change_address (string, optional)
+                    # 8. asset_change_address (string, optional)
+                    result = rpc_client.transferfromaddress(
+                        item['asset_name'],  # 1
+                        item['deposit_address'],  # 2
+                        amount,  # 3
+                        order['buyer_address'],  # 4
+                        "",  # 5
+                        0,  # 6
+                        "",  # 7
+                        item['deposit_address']  # 8
+                    )
+                    logger.info(f"Transfer successful: {result}")
+                    
+                    # Update fulfillment info
+                    await conn.execute(
+                        '''
+                        UPDATE order_items 
+                        SET 
+                            fulfillment_time = now(),
+                            fulfillment_tx_hash = $3,
+                            updated_at = now()
+                        WHERE order_id = $1 AND asset_name = $2
+                        ''',
+                        order_id,
+                        item['asset_name'],
+                        result[0] if isinstance(result, list) else result  # Extract first tx hash if result is a list
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to transfer {item['asset_name']}: {e}")
+                    raise PayoutError(f"Failed to transfer {item['asset_name']}: {str(e)}")
+            
+            # Then send EVR to sellers and fee address using sendmany
+            # Convert all amounts to float for RPC
+            payments = {
+                addr: float(amount)  # Convert Decimal to float
+                for addr, amount in seller_payments.items()
+            }
+            if total_fees > 0:
+                payments[DEFAULT_FEE_ADDRESS] = float(total_fees)
+            
+            # Send all EVR payments in one transaction
+            try:
+                logger.info(f"Sending EVR payments for order {order_id}: {payments}")
+                # Parameters in exact order from docs:
+                # 1. fromaccount (string, should be "")
+                # 2. amounts (object)
+                # 3. minconf (numeric, optional)
+                # 4. comment (string, optional)
+                result = rpc_client.sendmany(
+                    "",  # 1
+                    payments,  # 2
+                    1,  # 3
+                    f"Order {order_id} payout"  # 4
+                )
+                logger.info(f"EVR payments successful: {result}")
+            except Exception as e:
+                logger.error(f"Failed to send EVR payments: {e}")
+                raise PayoutError(f"Failed to send EVR payments: {str(e)}")
+            
+            # Record successful payout
+            await conn.execute(
+                '''
+                INSERT INTO order_payouts (
+                    order_id, 
+                    success,
+                    total_fees_paid,
+                    completed_at
+                ) VALUES ($1, true, $2, now())
+                ON CONFLICT (order_id) DO UPDATE
+                SET 
+                    success = true,
+                    total_fees_paid = EXCLUDED.total_fees_paid,
+                    completed_at = EXCLUDED.completed_at,
+                    updated_at = now()
+                ''',
+                order_id,
+                total_fees
+            )
+            
+            # Update order status
+            await conn.execute(
+                '''
+                UPDATE orders 
+                SET 
+                    status = 'completed',
+                    updated_at = now()
+                WHERE id = $1
+                ''',
+                order_id
+            )
+            
+            logger.info(f"Successfully processed payout for order {order_id}")
+            
+        except Exception as e:
+            logger.error(f"Error processing payout for order {order_id}: {e}")
+            raise PayoutError(f"Payout failed: {str(e)}")
+            
+    async def _update_payout_failure(self, order_id: UUID):
+        """Update failure count for an order payout.
+        
+        Args:
+            order_id: The order UUID
+        """
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                '''
+                INSERT INTO order_payouts (
+                    order_id,
+                    success,
+                    failure_count,
+                    last_attempt_time
+                ) VALUES ($1, false, 1, now())
+                ON CONFLICT (order_id) DO UPDATE
+                SET 
+                    failure_count = order_payouts.failure_count + 1,
+                    last_attempt_time = now(),
+                    updated_at = now()
+                ''',
+                order_id
+            )
+
 # Export public interface
 __all__ = [
     'OrderManager',
     'OrderError',
     'InsufficientBalanceError',
     'ListingNotFoundError',
-    'AssetNotFoundError'
+    'AssetNotFoundError',
+    'PayoutManager',
+    'PayoutError',
+    'InsufficientFundsError'
 ] 

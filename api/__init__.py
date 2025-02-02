@@ -7,7 +7,7 @@ This module provides HTTP endpoints for:
 """
 
 import logging
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from typing import List, Optional
 from uuid import UUID
 import json
@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Depends, Query, Response, Background
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from contextlib import asynccontextmanager
 
 from database import get_pool, init_db, close as db_close
@@ -142,6 +142,18 @@ class OrderItem(BaseModel):
     """Item in an order"""
     asset_name: str = Field(..., description="Name of the asset to order")
     amount: Decimal = Field(..., description="Amount of the asset to order")
+
+    @validator('amount')
+    def validate_amount(cls, v):
+        """Convert string amounts to Decimal and validate."""
+        if isinstance(v, str):
+            try:
+                v = Decimal(v)
+            except (TypeError, ValueError, DecimalException):
+                raise ValueError("Invalid amount format")
+        if v <= 0:
+            raise ValueError("Amount must be positive")
+        return v
 
 class CreateOrder(BaseModel):
     """Request model for creating a new order"""
@@ -575,13 +587,60 @@ async def get_order_status(
             for balance in balances.values()
         )
         
+        # Get payout information
+        async with manager.pool.acquire() as conn:
+            payout = await conn.fetchrow(
+                '''
+                SELECT 
+                    success,
+                    failure_count,
+                    last_attempt_time,
+                    completed_at,
+                    total_fees_paid
+                FROM order_payouts
+                WHERE order_id = $1
+                ''',
+                order_id
+            )
+            
+            # Get fulfillment info for items
+            items = await conn.fetch(
+                '''
+                SELECT 
+                    asset_name,
+                    amount,
+                    fulfillment_time,
+                    fulfillment_tx_hash
+                FROM order_items
+                WHERE order_id = $1
+                ''',
+                order_id
+            )
+            
+            fulfillment_info = {
+                item['asset_name']: {
+                    'amount': str(item['amount']),
+                    'fulfilled_at': item['fulfillment_time'].isoformat() if item['fulfillment_time'] else None,
+                    'tx_hash': item['fulfillment_tx_hash']
+                }
+                for item in items
+            }
+        
         return {
             "order_id": order_id,
             "status": order['status'],
             "total_required": total_required,
             "total_paid": total_paid,
             "is_paid": total_paid >= total_required,
-            "balances": balances
+            "balances": balances,
+            "payout_info": {
+                "is_completed": payout['success'] if payout else False,
+                "failure_count": payout['failure_count'] if payout else 0,
+                "last_attempt": payout['last_attempt_time'].isoformat() if payout and payout['last_attempt_time'] else None,
+                "completed_at": payout['completed_at'].isoformat() if payout and payout['completed_at'] else None,
+                "total_fees_paid": str(payout['total_fees_paid']) if payout and payout['total_fees_paid'] else "0",
+            },
+            "fulfillment": fulfillment_info
         }
     except Exception as e:
         logger.error(f"Error getting order status: {e}")

@@ -20,6 +20,7 @@ Raises:
 from configparser import ConfigParser
 from pathlib import Path
 from typing import Dict, Any, List
+import os
 
 class ConfigValidationError:
     """Helper class to format configuration validation errors"""
@@ -57,6 +58,18 @@ class ConfigValidationError:
 class SettingsError(Exception):
     """Raised when there are issues loading or parsing the settings configuration."""
     pass
+
+# Default settings
+DEFAULTS = {
+    'evrmore_root': os.path.expanduser('~/.evrmore'),
+    'db_url': 'postgresql://root@localhost:26257/defaultdb?sslmode=disable',
+    'min_confirmations': '6',  # Default to 6 confirmations for listing deposits
+    'max_payout_attempts': '3',  # Maximum number of attempts to process a payout
+    'payout_retry_delay': '300',  # 5 minutes between retry attempts
+    'payout_batch_size': '10',  # Number of orders to process in each batch
+    'order_expiration_minutes': '15',  # Orders expire after 15 minutes
+    'fee_address': 'EcNkvWpZrDRw3DsQSDh1CLLdYyAfzL6Ymj'  # Default fee collection address
+}
 
 def load_settings_conf(settings_path: str = ".") -> Dict[str, Any]:
     """Load and parse settings.conf file with strict validation
@@ -124,3 +137,40 @@ def load_settings_conf(settings_path: str = ".") -> Dict[str, Any]:
         if isinstance(e, SettingsError):
             raise
         raise SettingsError(f"Error parsing settings.conf: {str(e)}")
+
+def validate_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate loaded settings.
+    
+    Args:
+        settings: Dictionary of settings to validate
+        
+    Returns:
+        Validated and processed settings
+        
+    Raises:
+        SettingsError: If validation fails
+    """
+    try:
+        # Convert numeric settings
+        settings['min_confirmations'] = int(settings['min_confirmations'])
+        settings['max_payout_attempts'] = int(settings['max_payout_attempts'])
+        settings['payout_retry_delay'] = int(settings['payout_retry_delay'])
+        settings['payout_batch_size'] = int(settings['payout_batch_size'])
+        settings['order_expiration_minutes'] = int(settings['order_expiration_minutes'])
+        
+        # Validate numeric ranges
+        if settings['min_confirmations'] < 1:
+            raise ValueError("min_confirmations must be at least 1")
+        if settings['max_payout_attempts'] < 1:
+            raise ValueError("max_payout_attempts must be at least 1")
+        if settings['payout_retry_delay'] < 1:
+            raise ValueError("payout_retry_delay must be at least 1 second")
+        if settings['payout_batch_size'] < 1:
+            raise ValueError("payout_batch_size must be at least 1")
+        if settings['order_expiration_minutes'] < 1:
+            raise ValueError("order_expiration_minutes must be at least 1")
+            
+        return settings
+        
+    except (ValueError, KeyError) as e:
+        raise SettingsError(f"Invalid settings configuration: {str(e)}")
