@@ -585,74 +585,151 @@ async def get_order_status(
     """Get detailed status information for an order."""
     logger.info(f"Getting status for order {order_id}")
     try:
+        # First try as regular order
         order = await manager.get_order(order_id)
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
+        
+        if order:
+            # Regular order
+            balances = await manager.get_order_balances(order_id)
             
-        balances = await manager.get_order_balances(order_id)
-        
-        # Calculate payment progress
-        total_required = order['total_payment_evr']
-        total_paid = sum(
-            balance['confirmed_balance'] 
-            for balance in balances.values()
-        )
-        
-        # Get payout information
-        async with manager.pool.acquire() as conn:
-            payout = await conn.fetchrow(
-                '''
-                SELECT 
-                    success,
-                    failure_count,
-                    last_attempt_time,
-                    completed_at,
-                    total_fees_paid
-                FROM order_payouts
-                WHERE order_id = $1
-                ''',
-                order_id
+            # Calculate payment progress
+            total_required = order['total_payment_evr']
+            total_paid = sum(
+                balance['confirmed_balance'] 
+                for balance in balances.values()
             )
             
-            # Get fulfillment info for items
-            items = await conn.fetch(
-                '''
-                SELECT 
-                    asset_name,
-                    amount,
-                    fulfillment_time,
-                    fulfillment_tx_hash
-                FROM order_items
-                WHERE order_id = $1
-                ''',
-                order_id
-            )
-            
-            fulfillment_info = {
-                item['asset_name']: {
-                    'amount': str(item['amount']),
-                    'fulfilled_at': item['fulfillment_time'].isoformat() if item['fulfillment_time'] else None,
-                    'tx_hash': item['fulfillment_tx_hash']
+            # Get payout information
+            async with manager.pool.acquire() as conn:
+                payout = await conn.fetchrow(
+                    '''
+                    SELECT 
+                        success,
+                        failure_count,
+                        last_attempt_time,
+                        completed_at,
+                        total_fees_paid
+                    FROM order_payouts
+                    WHERE order_id = $1
+                    ''',
+                    order_id
+                )
+                
+                # Get fulfillment info for items
+                items = await conn.fetch(
+                    '''
+                    SELECT 
+                        asset_name,
+                        amount,
+                        fulfillment_time,
+                        fulfillment_tx_hash
+                    FROM order_items
+                    WHERE order_id = $1
+                    ''',
+                    order_id
+                )
+                
+                fulfillment_info = {
+                    item['asset_name']: {
+                        'amount': str(item['amount']),
+                        'fulfilled_at': item['fulfillment_time'].isoformat() if item['fulfillment_time'] else None,
+                        'tx_hash': item['fulfillment_tx_hash']
+                    }
+                    for item in items
                 }
-                for item in items
+            
+            return {
+                "order_id": order_id,
+                "order_type": "regular",
+                "status": order['status'],
+                "total_required": total_required,
+                "total_paid": total_paid,
+                "is_paid": total_paid >= total_required,
+                "balances": balances,
+                "payout_info": {
+                    "is_completed": payout['success'] if payout else False,
+                    "failure_count": payout['failure_count'] if payout else 0,
+                    "last_attempt": payout['last_attempt_time'].isoformat() if payout and payout['last_attempt_time'] else None,
+                    "completed_at": payout['completed_at'].isoformat() if payout and payout['completed_at'] else None,
+                    "total_fees_paid": str(payout['total_fees_paid']) if payout and payout['total_fees_paid'] else "0",
+                },
+                "fulfillment": fulfillment_info
             }
         
-        return {
-            "order_id": order_id,
-            "status": order['status'],
-            "total_required": total_required,
-            "total_paid": total_paid,
-            "is_paid": total_paid >= total_required,
-            "balances": balances,
-            "payout_info": {
-                "is_completed": payout['success'] if payout else False,
-                "failure_count": payout['failure_count'] if payout else 0,
-                "last_attempt": payout['last_attempt_time'].isoformat() if payout and payout['last_attempt_time'] else None,
-                "completed_at": payout['completed_at'].isoformat() if payout and payout['completed_at'] else None,
-                "total_fees_paid": str(payout['total_fees_paid']) if payout and payout['total_fees_paid'] else "0",
-            },
-            "fulfillment": fulfillment_info
-        }
+        # Try as cart order if not found
+        cart_order = await manager.get_cart_order(order_id)
+        if cart_order:
+            balances = await manager.get_cart_order_balances(order_id)
+            
+            # Calculate payment progress
+            total_required = cart_order['total_payment_evr']
+            total_paid = sum(
+                balance['confirmed_balance'] 
+                for balance in balances.values()
+            )
+            
+            # Get payout information
+            async with manager.pool.acquire() as conn:
+                payout = await conn.fetchrow(
+                    '''
+                    SELECT 
+                        success,
+                        failure_count,
+                        last_attempt_time,
+                        completed_at,
+                        total_fees_paid
+                    FROM cart_order_payouts
+                    WHERE cart_order_id = $1
+                    ''',
+                    order_id
+                )
+                
+                # Get fulfillment info for items
+                items = await conn.fetch(
+                    '''
+                    SELECT 
+                        listing_id,
+                        asset_name,
+                        amount,
+                        fulfillment_time,
+                        fulfillment_tx_hash
+                    FROM cart_order_items
+                    WHERE cart_order_id = $1
+                    ''',
+                    order_id
+                )
+                
+                fulfillment_info = {
+                    f"{item['listing_id']}_{item['asset_name']}": {
+                        'amount': str(item['amount']),
+                        'fulfilled_at': item['fulfillment_time'].isoformat() if item['fulfillment_time'] else None,
+                        'tx_hash': item['fulfillment_tx_hash']
+                    }
+                    for item in items
+                }
+            
+            return {
+                "order_id": order_id,
+                "order_type": "cart",
+                "status": cart_order['status'],
+                "total_required": total_required,
+                "total_paid": total_paid,
+                "is_paid": total_paid >= total_required,
+                "balances": balances,
+                "payout_info": {
+                    "is_completed": payout['success'] if payout else False,
+                    "failure_count": payout['failure_count'] if payout else 0,
+                    "last_attempt": payout['last_attempt_time'].isoformat() if payout and payout['last_attempt_time'] else None,
+                    "completed_at": payout['completed_at'].isoformat() if payout and payout['completed_at'] else None,
+                    "total_fees_paid": str(payout['total_fees_paid']) if payout and payout['total_fees_paid'] else "0",
+                },
+                "fulfillment": fulfillment_info
+            }
+            
+        raise HTTPException(status_code=404, detail="Order not found")
+            
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting order status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -798,4 +875,80 @@ async def get_cart_order_status(
         }
     except Exception as e:
         logger.error(f"Error getting cart order status: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/cart/orders/{cart_order_id}", tags=["cart"])
+async def get_cart_order(
+    cart_order_id: UUID,
+    manager: OrderManager = Depends(get_order_manager)
+) -> dict:
+    """Get a cart order by ID."""
+    try:
+        cart_order = await manager.get_cart_order(cart_order_id)
+        if not cart_order:
+            raise HTTPException(status_code=404, detail="Cart order not found")
+        return cart_order
+    except Exception as e:
+        logger.error(f"Error getting cart order: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/cart/orders/{cart_order_id}/balances", tags=["cart"])
+async def get_cart_order_balances(
+    cart_order_id: UUID,
+    manager: OrderManager = Depends(get_order_manager)
+) -> dict:
+    """Get balances for a cart order."""
+    try:
+        return await manager.get_cart_order_balances(cart_order_id)
+    except OrderError:
+        raise HTTPException(status_code=404, detail="Cart order not found")
+    except Exception as e:
+        logger.error(f"Error getting cart order balances: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/cart/orders/", tags=["cart"])
+async def search_cart_orders(
+    buyer_address: Optional[str] = Query(None, description="Filter by buyer address"),
+    status: Optional[str] = Query(None, description="Filter by order status"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    manager: OrderManager = Depends(get_order_manager)
+) -> List[dict]:
+    """Search cart orders with various filters."""
+    logger.info(
+        "Searching cart orders with params: buyer=%r, status=%r, limit=%d, offset=%d",
+        buyer_address, status, limit, offset
+    )
+    try:
+        async with manager.pool.acquire() as conn:
+            # Build query
+            query = "SELECT * FROM cart_orders WHERE 1=1"
+            params = []
+            
+            if buyer_address:
+                params.append(buyer_address)
+                query += f" AND buyer_address = ${len(params)}"
+                
+            if status:
+                params.append(status)
+                query += f" AND status = ${len(params)}"
+                
+            # Add ordering and pagination
+            query += " ORDER BY created_at DESC"
+            params.extend([limit, offset])
+            query += f" LIMIT ${len(params)-1} OFFSET ${len(params)}"
+            
+            # Execute query
+            rows = await conn.fetch(query, *params)
+            
+            # Get full details for each cart order
+            results = []
+            for row in rows:
+                cart_order = await manager.get_cart_order(row['id'])
+                results.append(cart_order)
+                
+            return results
+            
+    except Exception as e:
+        logger.error(f"Error searching cart orders: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") 
