@@ -167,6 +167,17 @@ class UpdateListing(BaseModel):
     image_ipfs_hash: Optional[str] = Field(None, description="New IPFS hash for the listing image")
     prices: Optional[dict] = Field(None, description="New prices for the listing")
 
+class CartOrderItem(BaseModel):
+    """Model for a cart order item"""
+    listing_id: UUID = Field(..., description="ID of the listing to order from")
+    asset_name: str = Field(..., description="Name of the asset to order")
+    amount: Decimal = Field(..., description="Amount of the asset to order")
+
+class CreateCartOrder(BaseModel):
+    """Request model for creating a new cart order"""
+    buyer_address: str = Field(..., description="Buyer's EVR address")
+    items: List[CartOrderItem] = Field(..., description="List of items to order from different listings")
+
 # Dependency for getting managers
 async def get_listing_manager():
     """Get a listing manager instance."""
@@ -644,4 +655,147 @@ async def get_order_status(
         }
     except Exception as e:
         logger.error(f"Error getting order status: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# Cart order endpoints
+@app.post("/cart/orders/", tags=["cart"])
+async def create_cart_order(
+    order: CreateCartOrder,
+    response: Response,
+    manager: OrderManager = Depends(get_order_manager)
+) -> dict:
+    """Create a new cart order for items from multiple listings."""
+    try:
+        # Create the cart order
+        result = await manager.create_cart_order(
+            buyer_address=order.buyer_address,
+            items=[item.dict() for item in order.items]
+        )
+        
+        # Format the response for frontend tracking
+        cart_order_data = {
+            "id": str(result["id"]),
+            "buyer_address": result["buyer_address"],
+            "payment_address": result["payment_address"],
+            "status": result["status"],
+            "total_price_evr": str(result["total_price_evr"]),
+            "total_fee_evr": str(result["total_fee_evr"]),
+            "total_payment_evr": str(result["total_payment_evr"]),
+            "items": [{
+                "listing_id": str(item["listing_id"]),
+                "listing_name": item["listing_name"],
+                "seller_address": item["seller_address"],
+                "asset_name": item["asset_name"],
+                "amount": str(item["amount"]),
+                "price_evr": str(item["price_evr"]),
+                "fee_evr": str(item["fee_evr"])
+            } for item in result["items"]],
+            "created_at": result["created_at"].isoformat() if result["created_at"] else None,
+            "updated_at": result["updated_at"].isoformat() if result["updated_at"] else None
+        }
+        
+        # Set cookie with cart order tracking info
+        response.set_cookie(
+            key=f"cart_order_{cart_order_data['id']}", 
+            value=json.dumps(cart_order_data),
+            max_age=60*60*24*30,  # 30 days
+            httponly=False,  # Allow JavaScript access
+            samesite="strict",
+            secure=True
+        )
+        
+        return cart_order_data
+        
+    except ListingNotFoundError:
+        raise HTTPException(status_code=404, detail="One or more listings not found")
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient balance for {e.asset_name}: have {e.available}, need {e.requested}"
+        )
+    except OrderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating cart order: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/cart/orders/{cart_order_id}/status", tags=["cart"])
+async def get_cart_order_status(
+    cart_order_id: UUID,
+    manager: OrderManager = Depends(get_order_manager)
+) -> dict:
+    """Get detailed status information for a cart order."""
+    logger.info(f"Getting status for cart order {cart_order_id}")
+    try:
+        cart_order = await manager.get_cart_order(cart_order_id)
+        if not cart_order:
+            raise HTTPException(status_code=404, detail="Cart order not found")
+            
+        balances = await manager.get_cart_order_balances(cart_order_id)
+        
+        # Calculate payment progress
+        total_required = cart_order['total_payment_evr']
+        total_paid = sum(
+            balance['confirmed_balance'] 
+            for balance in balances.values()
+        )
+        
+        # Get payout information
+        async with manager.pool.acquire() as conn:
+            payout = await conn.fetchrow(
+                '''
+                SELECT 
+                    success,
+                    failure_count,
+                    last_attempt_time,
+                    completed_at,
+                    total_fees_paid
+                FROM cart_order_payouts
+                WHERE cart_order_id = $1
+                ''',
+                cart_order_id
+            )
+            
+            # Get fulfillment info for items
+            items = await conn.fetch(
+                '''
+                SELECT 
+                    listing_id,
+                    asset_name,
+                    amount,
+                    fulfillment_time,
+                    fulfillment_tx_hash
+                FROM cart_order_items
+                WHERE cart_order_id = $1
+                ''',
+                cart_order_id
+            )
+            
+            fulfillment_info = {
+                f"{item['listing_id']}_{item['asset_name']}": {
+                    'amount': str(item['amount']),
+                    'fulfilled_at': item['fulfillment_time'].isoformat() if item['fulfillment_time'] else None,
+                    'tx_hash': item['fulfillment_tx_hash']
+                }
+                for item in items
+            }
+        
+        return {
+            "cart_order_id": cart_order_id,
+            "status": cart_order['status'],
+            "total_required": total_required,
+            "total_paid": total_paid,
+            "is_paid": total_paid >= total_required,
+            "balances": balances,
+            "payout_info": {
+                "is_completed": payout['success'] if payout else False,
+                "failure_count": payout['failure_count'] if payout else 0,
+                "last_attempt": payout['last_attempt_time'].isoformat() if payout and payout['last_attempt_time'] else None,
+                "completed_at": payout['completed_at'].isoformat() if payout and payout['completed_at'] else None,
+                "total_fees_paid": str(payout['total_fees_paid']) if payout and payout['total_fees_paid'] else "0",
+            },
+            "fulfillment": fulfillment_info
+        }
+    except Exception as e:
+        logger.error(f"Error getting cart order status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") 

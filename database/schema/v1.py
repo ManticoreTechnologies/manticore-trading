@@ -1,6 +1,6 @@
 """Schema v1 - Initial schema.
 
-This version creates all core tables including blocks, transactions, and listings.
+This version creates all core tables including blocks, transactions, listings, orders, and cart orders.
 The listings table includes the listing_address field and automatic balance updates via trigger.
 Compatible with CockroachDB Cloud.
 """
@@ -172,7 +172,8 @@ schema = {
             'columns': [
                 {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
                 {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
-                {'name': 'order_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'order_id', 'type': 'UUID'},
+                {'name': 'cart_order_id', 'type': 'UUID'},
                 {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
                 {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
                 {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
@@ -192,7 +193,11 @@ schema = {
             ],
             'foreign_keys': [
                 {'columns': ['listing_id'], 'references': 'listings(id)'},
-                {'columns': ['order_id'], 'references': 'orders(id)'}
+                {'columns': ['order_id'], 'references': 'orders(id)', 'nullable': True},
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)', 'nullable': True}
+            ],
+            'checks': [
+                {'name': 'valid_order_reference', 'expression': "(order_id IS NOT NULL AND cart_order_id IS NULL) OR (cart_order_id IS NOT NULL AND order_id IS NULL)"}
             ]
         },
         {
@@ -215,6 +220,94 @@ schema = {
                 {'name': 'idx_order_payouts_status', 'columns': ['success']},
                 {'name': 'idx_order_payouts_attempt', 'columns': ['last_attempt_time']}
             ]
+        },
+        {
+            'name': 'cart_orders',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'payment_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_cart_orders_buyer', 'columns': ['buyer_address']},
+                {'name': 'idx_cart_orders_status', 'columns': ['status']},
+                {'name': 'idx_cart_orders_payment_address', 'columns': ['payment_address'], 'unique': True}
+            ],
+            'checks': [
+                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"}
+            ]
+        },
+        {
+            'name': 'cart_order_items',
+            'columns': [
+                {'name': 'cart_order_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'fee_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'fulfillment_tx_hash', 'type': 'TEXT'},
+                {'name': 'fulfillment_time', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'primary_key': ['cart_order_id', 'listing_id', 'asset_name'],
+            'foreign_keys': [
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)'},
+                {'columns': ['listing_id'], 'references': 'listings(id)'}
+            ],
+            'checks': [
+                {'name': 'positive_cart_amount', 'expression': "amount > 0"},
+                {'name': 'positive_cart_price', 'expression': "price_evr > 0"},
+                {'name': 'positive_cart_fee', 'expression': "fee_evr >= 0"}
+            ]
+        },
+        {
+            'name': 'cart_order_balances',
+            'columns': [
+                {'name': 'cart_order_id', 'type': 'UUID'},
+                {'name': 'asset_name', 'type': 'TEXT'},
+                {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
+                {'name': 'last_confirmed_tx_time', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'primary_key': ['cart_order_id', 'asset_name'],
+            'foreign_keys': [
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)'}
+            ]
+        },
+        {
+            'name': 'cart_order_payouts',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'cart_order_id', 'type': 'UUID', 'nullable': False, 'unique': True},
+                {'name': 'success', 'type': 'BOOLEAN', 'nullable': False, 'default': 'false'},
+                {'name': 'failure_count', 'type': 'INT8', 'nullable': False, 'default': '0'},
+                {'name': 'total_fees_paid', 'type': 'DECIMAL'},
+                {'name': 'last_attempt_time', 'type': 'TIMESTAMP'},
+                {'name': 'completed_at', 'type': 'TIMESTAMP'},
+                {'name': 'error_message', 'type': 'TEXT'},
+                {'name': 'refund_tx_hash', 'type': 'TEXT'},
+                {'name': 'refund_error', 'type': 'TEXT'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'foreign_keys': [
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)'}
+            ],
+            'indexes': [
+                {'name': 'idx_cart_order_payouts_status', 'columns': ['success']},
+                {'name': 'idx_cart_order_payouts_attempt', 'columns': ['last_attempt_time']}
+            ],
+            'checks': [
+                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded', 'refund_failed', 'manual_intervention_required')"}
+            ]
         }
     ],
     'triggers': [
@@ -223,7 +316,7 @@ schema = {
             'function_name': 'update_listing_balance',
             'table': 'transaction_entries',
             'timing': 'AFTER',
-            'events': ['INSERT', 'UPDATE OF confirmations'],
+            'events': ['INSERT', 'UPDATE'],
             'level': 'ROW',
             'function_body': '''
                 BEGIN
@@ -346,7 +439,7 @@ schema = {
             'function_name': 'update_order_balance',
             'table': 'transaction_entries',
             'timing': 'AFTER',
-            'events': ['INSERT', 'UPDATE OF confirmations'],
+            'events': ['INSERT', 'UPDATE'],
             'level': 'ROW',
             'function_body': '''
                 BEGIN
@@ -469,7 +562,7 @@ schema = {
             'function_name': 'update_order_status',
             'table': 'order_balances',
             'timing': 'AFTER',
-            'events': ['INSERT', 'UPDATE OF pending_balance, confirmed_balance'],
+            'events': ['INSERT', 'UPDATE'],
             'level': 'ROW',
             'function_body': '''
                 DECLARE total_payment DECIMAL;
@@ -477,7 +570,13 @@ schema = {
                 DECLARE new_status TEXT;
                 BEGIN
                     -- Only process EVR balance changes
-                    IF (NEW).asset_name = 'EVR' THEN
+                    IF (NEW).asset_name = 'EVR' AND (
+                        TG_OP = 'INSERT' OR 
+                        (TG_OP = 'UPDATE' AND (
+                            (NEW).pending_balance IS DISTINCT FROM (OLD).pending_balance OR 
+                            (NEW).confirmed_balance IS DISTINCT FROM (OLD).confirmed_balance
+                        ))
+                    ) THEN
                         -- Get the total payment required and current status
                         SELECT 
                             COALESCE(SUM(price_evr + fee_evr), 0),
@@ -520,12 +619,12 @@ schema = {
             'function_name': 'record_sale_on_order_paid',
             'table': 'orders',
             'timing': 'AFTER',
-            'events': ['UPDATE OF status'],
+            'events': ['UPDATE'],
             'level': 'ROW',
             'function_body': '''
                 BEGIN
                     -- Only process when status changes to 'paid'
-                    IF (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
+                    IF TG_OP = 'UPDATE' AND (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
                         -- Insert sale records for each item in the order
                         INSERT INTO sale_history (
                             listing_id,
@@ -550,6 +649,226 @@ schema = {
                         JOIN order_items oi ON oi.order_id = o.id
                         JOIN listings l ON l.id = o.listing_id
                         WHERE o.id = (NEW).id;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'update_cart_order_balance_trigger',
+            'function_name': 'update_cart_order_balance',
+            'table': 'transaction_entries',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Handle both new transactions and confirmation updates
+                    IF (NEW).entry_type = 'receive' THEN
+                        -- For new transactions, add to pending balance
+                        IF TG_OP = 'INSERT' THEN
+                            INSERT INTO cart_order_balances (
+                                cart_order_id, asset_name, confirmed_balance, pending_balance,
+                                last_confirmed_tx_hash, last_confirmed_tx_time, created_at, updated_at
+                            )
+                            SELECT 
+                                co.id,
+                                (NEW).asset_name,
+                                0,
+                                CASE 
+                                    WHEN (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    ) > 1 
+                                    THEN (NEW).amount / (
+                                        SELECT COUNT(*) 
+                                        FROM transaction_entries 
+                                        WHERE tx_hash = (NEW).tx_hash 
+                                        AND asset_name = (NEW).asset_name 
+                                        AND entry_type = 'receive'
+                                    )
+                                    ELSE (NEW).amount
+                                END,
+                                NULL,
+                                NULL,
+                                now(),
+                                now()
+                            FROM cart_orders co
+                            WHERE co.payment_address = (NEW).address
+                            ON CONFLICT (cart_order_id, asset_name) DO UPDATE
+                            SET 
+                                pending_balance = cart_order_balances.pending_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                updated_at = now();
+
+                        -- For confirmation updates
+                        ELSIF TG_OP = 'UPDATE' AND (NEW).confirmations >= 2 AND ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
+                            UPDATE cart_order_balances cob
+                            SET 
+                                confirmed_balance = confirmed_balance + (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                ),
+                                pending_balance = GREATEST(0, pending_balance - (
+                                    CASE 
+                                        WHEN (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        ) > 1 
+                                        THEN (NEW).amount / (
+                                            SELECT COUNT(*) 
+                                            FROM transaction_entries 
+                                            WHERE tx_hash = (NEW).tx_hash 
+                                            AND asset_name = (NEW).asset_name 
+                                            AND entry_type = 'receive'
+                                        )
+                                        ELSE (NEW).amount
+                                    END
+                                )),
+                                last_confirmed_tx_hash = (NEW).tx_hash,
+                                last_confirmed_tx_time = (NEW).time,
+                                updated_at = now()
+                            FROM cart_orders co
+                            WHERE co.payment_address = (NEW).address
+                            AND co.id = cob.cart_order_id
+                            AND cob.asset_name = (NEW).asset_name;
+                        END IF;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'update_cart_order_status_trigger',
+            'function_name': 'update_cart_order_status',
+            'table': 'cart_order_balances',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE'],
+            'level': 'ROW',
+            'function_body': '''
+                DECLARE total_payment DECIMAL;
+                DECLARE current_status TEXT;
+                DECLARE new_status TEXT;
+                BEGIN
+                    -- Only process EVR balance changes
+                    IF (NEW).asset_name = 'EVR' AND (
+                        TG_OP = 'INSERT' OR 
+                        (TG_OP = 'UPDATE' AND (
+                            (NEW).pending_balance IS DISTINCT FROM (OLD).pending_balance OR 
+                            (NEW).confirmed_balance IS DISTINCT FROM (OLD).confirmed_balance
+                        ))
+                    ) THEN
+                        -- Get the total payment required and current status
+                        SELECT 
+                            COALESCE(SUM(price_evr + fee_evr), 0),
+                            co.status 
+                        INTO total_payment, current_status
+                        FROM cart_orders co 
+                        LEFT JOIN cart_order_items coi ON coi.cart_order_id = co.id
+                        WHERE co.id = (NEW).cart_order_id
+                        GROUP BY co.id, co.status;
+
+                        -- Determine new status based on balances
+                        new_status := CASE
+                            -- Fully paid
+                            WHEN (NEW).confirmed_balance >= total_payment THEN 'paid'
+                            -- Partially paid with pending
+                            WHEN (NEW).confirmed_balance > 0 AND (NEW).pending_balance > 0 THEN 'confirming'
+                            -- Partially paid
+                            WHEN (NEW).confirmed_balance > 0 THEN 'partially_paid'
+                            -- Only pending payments
+                            WHEN (NEW).pending_balance > 0 THEN 'confirming'
+                            -- No payments
+                            ELSE 'pending'
+                        END;
+
+                        -- Update cart order status if changed
+                        IF new_status != current_status THEN
+                            UPDATE cart_orders
+                            SET status = new_status,
+                                updated_at = now()
+                            WHERE id = (NEW).cart_order_id;
+                        END IF;
+                    END IF;
+
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'record_cart_sale_on_paid_trigger',
+            'function_name': 'record_cart_sale_on_paid',
+            'table': 'cart_orders',
+            'timing': 'AFTER',
+            'events': ['UPDATE'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Only process when status changes to 'paid'
+                    IF TG_OP = 'UPDATE' AND (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
+                        -- Insert sale records for each item in the cart order
+                        INSERT INTO sale_history (
+                            listing_id,
+                            cart_order_id,
+                            asset_name,
+                            amount,
+                            price_evr,
+                            seller_address,
+                            buyer_address,
+                            sale_time
+                        )
+                        SELECT 
+                            coi.listing_id,
+                            (NEW).id as cart_order_id,
+                            coi.asset_name,
+                            coi.amount,
+                            coi.price_evr,
+                            l.seller_address,
+                            (NEW).buyer_address,
+                            (NEW).updated_at as sale_time
+                        FROM cart_order_items coi
+                        JOIN listings l ON l.id = coi.listing_id
+                        WHERE coi.cart_order_id = (NEW).id;
                     END IF;
                     
                     RETURN NEW;
