@@ -945,15 +945,16 @@ class PayoutManager:
                     amount = float(item['amount'])  # Convert to float for RPC
                     logger.info(f"Attempting transfer with amount: {amount}")
                     
-                    # Transfer asset using transfer instead of transferfromaddress
-                    result = rpc_client.transfer(
-                        item['asset_name'],  # Asset name
-                        amount,              # Amount
+                    # Transfer asset using transferfromaddress instead of transfer
+                    result = rpc_client.transferfromaddress(
+                        item['asset_name'],      # Asset name
+                        item['deposit_address'], # From address (listing's deposit address)
+                        amount,                  # Amount
                         order['buyer_address'],  # To address
-                        "",                  # Message
-                        0,                   # Expire time
-                        "",                  # Change address
-                        ""                   # Asset change address
+                        "",                      # Message
+                        0,                       # Expire time
+                        item['deposit_address'], # EVR change address (back to listing)
+                        item['deposit_address']  # Asset change address (back to listing)
                     )
                     logger.info(f"Transfer successful: {result}")
                     
@@ -1035,6 +1036,25 @@ class PayoutManager:
                 ''',
                 order_id
             )
+            
+            # Update listing balances to subtract sold amounts
+            for item in items:
+                await conn.execute(
+                    '''
+                    UPDATE listing_balances
+                    SET 
+                        confirmed_balance = confirmed_balance - $3,
+                        updated_at = now()
+                    WHERE listing_id = $1 AND asset_name = $2
+                    ''',
+                    item['listing_id'],
+                    item['asset_name'],
+                    item['amount']
+                )
+                logger.info(
+                    f"Updated listing {item['listing_id']} balance: "
+                    f"subtracted {item['amount']} {item['asset_name']}"
+                )
             
             logger.info(f"Successfully processed payout for order {order_id}")
             
@@ -1134,15 +1154,16 @@ class PayoutManager:
                     amount = float(item['amount'])  # Convert to float for RPC
                     logger.info(f"Attempting transfer with amount: {amount}")
                     
-                    # Transfer asset using transfer
-                    result = rpc_client.transfer(
-                        item['asset_name'],  # Asset name
-                        amount,              # Amount
+                    # Transfer asset using transferfromaddress instead of transfer
+                    result = rpc_client.transferfromaddress(
+                        item['asset_name'],      # Asset name
+                        item['deposit_address'], # From address (listing's deposit address)
+                        amount,                  # Amount
                         cart_order['buyer_address'],  # To address
-                        "",                  # Message
-                        0,                   # Expire time
-                        "",                  # Change address
-                        ""                   # Asset change address
+                        "",                      # Message
+                        0,                       # Expire time
+                        item['deposit_address'], # EVR change address (back to listing)
+                        item['deposit_address']  # Asset change address (back to listing)
                     )
                     logger.info(f"Transfer successful: {result}")
                     
@@ -1242,6 +1263,25 @@ class PayoutManager:
                 ''',
                 cart_order_id
             )
+            
+            # Update listing balances to subtract sold amounts
+            for item in items:
+                await conn.execute(
+                    '''
+                    UPDATE listing_balances
+                    SET 
+                        confirmed_balance = confirmed_balance - $3,
+                        updated_at = now()
+                    WHERE listing_id = $1 AND asset_name = $2
+                    ''',
+                    item['listing_id'],
+                    item['asset_name'],
+                    item['amount']
+                )
+                logger.info(
+                    f"Updated listing {item['listing_id']} balance: "
+                    f"subtracted {item['amount']} {item['asset_name']}"
+                )
             
             logger.info(f"Successfully processed payout for cart order {cart_order_id}")
             
