@@ -8,7 +8,7 @@ This module provides HTTP endpoints for:
 
 import logging
 from decimal import Decimal, DecimalException
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 import json
 import asyncio
@@ -261,7 +261,7 @@ async def search_listings(
     limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     manager: ListingManager = Depends(get_listing_manager)
-) -> List[dict]:
+) -> Dict[str, Any]:
     """Search listings with various filters."""
     logger.info(
         "Searching listings with params: search=%r, seller=%r, asset=%r, price_range=%r-%r, status=%r, limit=%d, offset=%d",

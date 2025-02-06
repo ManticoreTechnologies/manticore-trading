@@ -460,7 +460,7 @@ class ListingManager:
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """Search listings with various filters.
         
         Args:
@@ -474,12 +474,24 @@ class ListingManager:
             offset: Number of results to skip (default: 0)
             
         Returns:
-            List of matching listings with their details
+            Dict containing:
+                - listings: List of matching listings with their details
+                - total_count: Total number of listings matching the filters
+                - total_pages: Total number of pages
+                - current_page: Current page number
         """
         await self.ensure_pool()
         
         try:
-            # Build the base query
+            # Build the base query for counting total results
+            count_query = """
+                SELECT COUNT(DISTINCT l.id)
+                FROM listings l
+                LEFT JOIN listing_prices lp ON l.id = lp.listing_id
+                WHERE 1=1
+            """
+            
+            # Build the base query for fetching listings
             query = """
                 SELECT DISTINCT l.*
                 FROM listings l
@@ -489,76 +501,130 @@ class ListingManager:
             params = []
             param_idx = 1
             
-            # Add search conditions
+            # Add search conditions to both queries
             if search_term:
-                query += f" AND (l.name ILIKE ${param_idx} OR l.description ILIKE ${param_idx})"
+                search_condition = f" AND (l.name ILIKE ${param_idx} OR l.description ILIKE ${param_idx})"
+                query += search_condition
+                count_query += search_condition
                 params.append(f"%{search_term}%")
                 param_idx += 1
                 
             if seller_address:
-                query += f" AND l.seller_address = ${param_idx}"
+                seller_condition = f" AND l.seller_address = ${param_idx}"
+                query += seller_condition
+                count_query += seller_condition
                 params.append(seller_address)
                 param_idx += 1
                 
             if asset_name:
-                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND asset_name = ${param_idx})"
+                asset_condition = f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND asset_name = ${param_idx})"
+                query += asset_condition
+                count_query += asset_condition
                 params.append(asset_name)
                 param_idx += 1
                 
             if min_price_evr is not None:
-                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr >= ${param_idx})"
+                min_price_condition = f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr >= ${param_idx})"
+                query += min_price_condition
+                count_query += min_price_condition
                 params.append(min_price_evr)
                 param_idx += 1
                 
             if max_price_evr is not None:
-                query += f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr <= ${param_idx})"
+                max_price_condition = f" AND EXISTS (SELECT 1 FROM listing_prices WHERE listing_id = l.id AND price_evr <= ${param_idx})"
+                query += max_price_condition
+                count_query += max_price_condition
                 params.append(max_price_evr)
                 param_idx += 1
                 
             if status:
-                query += f" AND l.status = ${param_idx}"
+                status_condition = f" AND l.status = ${param_idx}"
+                query += status_condition
+                count_query += status_condition
                 params.append(status)
                 param_idx += 1
                 
-            # Add ordering and pagination
+            # Add ordering and pagination only to the main query
             query += " ORDER BY l.created_at DESC LIMIT $" + str(param_idx) + " OFFSET $" + str(param_idx + 1)
-            params.extend([limit, offset])
+            pagination_params = [limit, offset]
             
-            logger.debug("Executing search query: %s with params: %r", query, params)
+            logger.debug("Executing search query: %s with params: %r", query, params + pagination_params)
             
             async with self.pool.acquire() as conn:
                 try:
+                    # Get total count first
+                    total_count = await conn.fetchval(count_query, *params)
+                    
+                    # Calculate pagination metadata
+                    total_pages = (total_count + limit - 1) // limit
+                    current_page = (offset // limit) + 1
+                    
                     # Execute search query
-                    rows = await conn.fetch(query, *params)
+                    rows = await conn.fetch(query, *(params + pagination_params))
                     logger.debug("Search query returned %d base results", len(rows))
                     
                     # Get full listing details for each result
-                    results = []
+                    listings = []
                     for row in rows:
                         try:
-                            listing = dict(row)
+                            # Convert row to dict and serialize UUID and datetime fields
+                            listing = {
+                                'id': str(row['id']),  # Convert UUID to string
+                                'seller_address': row['seller_address'],
+                                'listing_address': row['listing_address'],
+                                'deposit_address': row['deposit_address'],
+                                'name': row['name'],
+                                'description': row['description'],
+                                'image_ipfs_hash': row['image_ipfs_hash'],
+                                'status': row['status'],
+                                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                                'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
+                            }
                             
                             # Get prices
                             prices = await conn.fetch(
                                 'SELECT * FROM listing_prices WHERE listing_id = $1',
-                                listing['id']
+                                row['id']
                             )
-                            listing['prices'] = [dict(p) for p in prices]
+                            listing['prices'] = [{
+                                'asset_name': p['asset_name'],
+                                'price_evr': str(p['price_evr']) if p['price_evr'] is not None else None,
+                                'price_asset_name': p['price_asset_name'],
+                                'price_asset_amount': str(p['price_asset_amount']) if p['price_asset_amount'] is not None else None,
+                                'ipfs_hash': p['ipfs_hash'],
+                                'created_at': p['created_at'].isoformat() if p['created_at'] else None,
+                                'updated_at': p['updated_at'].isoformat() if p['updated_at'] else None
+                            } for p in prices]
                             
                             # Get balances
                             balances = await conn.fetch(
                                 'SELECT * FROM listing_balances WHERE listing_id = $1',
-                                listing['id']
+                                row['id']
                             )
-                            listing['balances'] = [dict(b) for b in balances]
+                            listing['balances'] = [{
+                                'asset_name': b['asset_name'],
+                                'confirmed_balance': str(b['confirmed_balance']) if b['confirmed_balance'] is not None else '0',
+                                'pending_balance': str(b['pending_balance']) if b['pending_balance'] is not None else '0',
+                                'last_confirmed_tx_hash': b['last_confirmed_tx_hash'],
+                                'last_confirmed_tx_time': b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None,
+                                'created_at': b['created_at'].isoformat() if b['created_at'] else None,
+                                'updated_at': b['updated_at'].isoformat() if b['updated_at'] else None
+                            } for b in balances]
                             
-                            results.append(listing)
+                            listings.append(listing)
                         except Exception as e:
                             logger.error("Error getting details for listing %s: %s", row.get('id'), str(e))
                             continue
                     
-                    logger.debug("Returning %d listings with full details", len(results))
-                    return results
+                    logger.debug("Returning %d listings with full details", len(listings))
+                    return {
+                        'listings': listings,
+                        'total_count': total_count,
+                        'total_pages': total_pages,
+                        'current_page': current_page,
+                        'limit': limit,
+                        'offset': offset
+                    }
                     
                 except Exception as e:
                     logger.exception("Database error executing search query: %s", str(e))
