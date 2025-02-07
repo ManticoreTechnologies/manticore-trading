@@ -92,4 +92,6 @@ app.add_middleware(
 def root():
     return HTMLResponse(content=open("api/index.html").read())
 
+# Import API modules
 from .listings import *
+from .orders import *

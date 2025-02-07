@@ -97,6 +97,8 @@
         <ul>
             <li><a href="#listings">Listings Endpoints</a></li>
             <li><a href="#transactions">Transaction Endpoints</a></li>
+            <li><a href="#orders">Order Endpoints</a></li>
+            <li><a href="#cart">Cart Order Endpoints</a></li>
             <li><a href="#management">Listing Management Endpoints</a></li>
             <li><a href="#operations">Listing Operations</a></li>
             <li><a href="#testing">Testing Endpoints</a></li>
@@ -263,6 +265,193 @@
                 <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
                 <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
             </ul>
+        </div>
+    </div>
+
+    <h2 id="orders">Order Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/listings/{listing_id}/orders</span>
+        <p>Create a new order for a listing</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "buyer_address": "string",
+    "items": [
+        {
+            "asset_name": "string",
+            "amount": "decimal"
+        }
+    ]
+}</pre>
+            <h4>Response:</h4>
+            <pre>
+{
+    "id": "string (UUID)",
+    "listing_id": "string (UUID)",
+    "buyer_address": "string",
+    "payment_address": "string",
+    "status": "string",
+    "created_at": "string (ISO datetime)",
+    "updated_at": "string (ISO datetime)",
+    "items": [
+        {
+            "asset_name": "string",
+            "amount": "decimal",
+            "price_evr": "decimal",
+            "fee_evr": "decimal"
+        }
+    ],
+    "balances": [
+        {
+            "asset_name": "string",
+            "confirmed_balance": "decimal",
+            "pending_balance": "decimal"
+        }
+    ],
+    "total_price_evr": "decimal",
+    "total_fee_evr": "decimal",
+    "total_payment_evr": "decimal"
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders/{order_id}</span>
+        <p>Get order details by ID</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders/{order_id}/balances</span>
+        <p>Get order payment balances</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "asset_name": {
+        "confirmed_balance": "decimal",
+        "pending_balance": "decimal"
+    }
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders</span>
+        <p>Search orders with various filters</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">buyer_address</span> <span class="param-type">(string, optional)</span>: Filter by buyer address</li>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string, optional)</span>: Filter by listing ID</li>
+                <li><span class="param-name">status</span> <span class="param-type">(string, optional)</span>: Filter by order status</li>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2 id="cart">Cart Order Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/cart/orders</span>
+        <p>Create a new cart order for multiple listings</p>
+        <div class="params">
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "buyer_address": "string",
+    "items": [
+        {
+            "listing_id": "string (UUID)",
+            "asset_name": "string",
+            "amount": "decimal"
+        }
+    ]
+}</pre>
+            <h4>Response:</h4>
+            <pre>
+{
+    "id": "string (UUID)",
+    "buyer_address": "string",
+    "payment_address": "string",
+    "status": "string",
+    "created_at": "string (ISO datetime)",
+    "updated_at": "string (ISO datetime)",
+    "items": [
+        {
+            "listing_id": "string (UUID)",
+            "listing_name": "string",
+            "seller_address": "string",
+            "asset_name": "string",
+            "amount": "decimal",
+            "price_evr": "decimal",
+            "fee_evr": "decimal"
+        }
+    ],
+    "balances": [
+        {
+            "asset_name": "string",
+            "confirmed_balance": "decimal",
+            "pending_balance": "decimal"
+        }
+    ],
+    "total_price_evr": "decimal",
+    "total_fee_evr": "decimal",
+    "total_payment_evr": "decimal"
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/cart/orders/{cart_order_id}</span>
+        <p>Get cart order details by ID</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">cart_order_id</span> <span class="param-type">(string)</span>: The cart order's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/cart/orders/{cart_order_id}/balances</span>
+        <p>Get cart order payment balances</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">cart_order_id</span> <span class="param-type">(string)</span>: The cart order's UUID</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "asset_name": {
+        "confirmed_balance": "decimal",
+        "pending_balance": "decimal"
+    }
+}</pre>
         </div>
     </div>
 

@@ -301,55 +301,80 @@ class ListingManager:
         listing_id: Union[str, uuid.UUID],
         updates: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Update mutable listing fields.
+        """Update a listing's details and prices.
         
         Args:
             listing_id: The listing UUID
-            updates: Dict of fields to update
-            
+            updates: Dict containing fields to update:
+                - name (optional)
+                - description (optional)
+                - image_ipfs_hash (optional)
+                - tags (optional)
+                - prices (optional): List of price specifications
+                
         Returns:
             Updated listing details
             
         Raises:
             ListingNotFoundError: If listing doesn't exist
-            ListingError: If update contains invalid/immutable fields
+            ListingError: If update contains invalid fields
+            InvalidPriceError: If price specification is invalid
         """
         await self.ensure_pool()
         
-        # Validate update fields
-        invalid_fields = set(updates.keys()) - MUTABLE_FIELDS
-        if invalid_fields:
-            raise ListingError(f"Cannot update fields: {invalid_fields}")
-        
-        async with self.pool.acquire() as conn:
-            # Check listing exists
-            exists = await conn.fetchval(
-                'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
-                listing_id
-            )
-            if not exists:
-                raise ListingNotFoundError(f"Listing {listing_id} not found")
+        try:
+            # First verify the listing exists
+            async with self.pool.acquire() as conn:
+                exists = await conn.fetchval(
+                    'SELECT EXISTS(SELECT 1 FROM listings WHERE id = $1)',
+                    listing_id
+                )
+                if not exists:
+                    raise ListingNotFoundError(f"Listing {listing_id} not found")
             
-            # Build update query
-            fields = []
-            values = []
-            for i, (field, value) in enumerate(updates.items(), start=1):
-                fields.append(f"{field} = ${i}")
-                values.append(value)
-            values.append(listing_id)
+            # Handle price updates first if present
+            if 'prices' in updates:
+                await self.update_listing_prices(
+                    listing_id=listing_id,
+                    add_or_update_prices=updates['prices']
+                )
+                del updates['prices']  # Remove prices from updates dict
             
-            # Execute update
-            await conn.execute(
-                f'''
-                UPDATE listings 
-                SET {', '.join(fields)}
-                WHERE id = ${len(values)}
-                ''',
-                *values
-            )
+            # Handle remaining mutable fields
+            if updates:
+                # Validate update fields
+                invalid_fields = set(updates.keys()) - MUTABLE_FIELDS
+                if invalid_fields:
+                    raise ListingError(f"Cannot update fields: {invalid_fields}")
+                
+                # Build update query
+                fields = []
+                values = []
+                for i, (field, value) in enumerate(updates.items(), start=1):
+                    fields.append(f"{field} = ${i}")
+                    values.append(value)
+                values.append(listing_id)
+                
+                # Execute update
+                async with self.pool.acquire() as conn:
+                    await conn.execute(
+                        f'''
+                        UPDATE listings 
+                        SET {', '.join(fields)}, updated_at = now()
+                        WHERE id = ${len(values)}
+                        ''',
+                        *values
+                    )
             
             # Return updated listing
             return await self.get_listing(listing_id)
+            
+        except (ListingNotFoundError, InvalidPriceError):
+            # Re-raise these exceptions without wrapping
+            raise
+        except Exception as e:
+            logger.error(f"Error updating listing: {e}")
+            raise ListingError(f"Failed to update listing: {e}")
             
     async def delete_listing(self, listing_id: Union[str, uuid.UUID]) -> None:
         """Delete a listing and all associated data.
@@ -888,5 +913,6 @@ __all__ = [
     'get_seller_transactions',
     'create_test_listing',
     'withdraw',
-    'WithdrawError'
+    'WithdrawError',
+    'update_listing'
 ] 

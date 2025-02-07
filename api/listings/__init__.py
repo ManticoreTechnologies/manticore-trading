@@ -3,7 +3,7 @@
 from api import app
 import listings
 from fastapi.responses import JSONResponse
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from fastapi import Query, HTTPException, status, Body
 from pydantic import BaseModel
@@ -302,19 +302,82 @@ async def create_listing():
             detail=str(e)
         )
 
+class PriceSpecification(BaseModel):
+    """Model for price specification."""
+    asset_name: str
+    price_evr: Optional[Decimal] = None
+    price_asset_name: Optional[str] = None
+    price_asset_amount: Optional[Decimal] = None
+    ipfs_hash: Optional[str] = None
+    units: Optional[int] = 8  # Default to 8 decimal places
+
+class UpdateListingRequest(BaseModel):
+    """Request model for updating a listing."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    image_ipfs_hash: Optional[str] = None
+    tags: Optional[List[str]] = None
+    prices: Optional[List[PriceSpecification]] = None
+
 @app.post("/listings/by-id/{listing_id}")
-async def update_listing(listing_id: str):
+async def update_listing(listing_id: str, update_request: UpdateListingRequest):
+    """Update an existing listing.
+    
+    Args:
+        listing_id: The listing's UUID
+        update_request: The update details containing:
+            - name (optional): New listing name
+            - description (optional): New listing description
+            - image_ipfs_hash (optional): New IPFS hash for listing image
+            - tags (optional): New list of tags
+            - prices (optional): New price specifications
+    """
     try:
-        return await listings.update_listing(listing_id)
-    except listings.ListingNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Listing {listing_id} not found"
-        )
+        manager = listings.ListingManager()
+        
+        # First verify the listing exists
+        try:
+            await manager.get_listing(listing_id)
+        except listings.ListingNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Listing {listing_id} not found"
+            )
+        
+        # Convert request model to dict, handling nested models
+        updates = {}
+        for field, value in update_request.dict(exclude_unset=True).items():
+            if value is not None:
+                if field == 'prices':
+                    # Convert price specifications to dicts
+                    updates[field] = [price.dict(exclude_unset=True) for price in update_request.prices]
+                elif field == 'tags':
+                    # Convert tags list to comma-separated string
+                    updates[field] = ','.join(value)
+                else:
+                    updates[field] = value
+        
+        # Perform the update
+        try:
+            updated_listing = await manager.update_listing(listing_id, updates)
+            return updated_listing
+        except listings.InvalidPriceError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        except listings.ListingError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+            
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Failed to update listing: {str(e)}"
         )
 
 @app.delete("/listings/by-id/{listing_id}")
