@@ -864,6 +864,7 @@ from .get_address_transactions import get_address_transactions
 from .get_listing_transactions import get_listing_transactions
 from .get_seller_transactions import get_seller_transactions
 from .create_test_listing import create_test_listing
+from .withdraw import withdraw, WithdrawError
 from .search import search
 
 # Export public interface
@@ -885,5 +886,7 @@ __all__ = [
     'get_address_transactions',
     'get_listing_transactions',
     'get_seller_transactions',
-    'create_test_listing'
+    'create_test_listing',
+    'withdraw',
+    'WithdrawError'
 ] 

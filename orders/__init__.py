@@ -991,7 +991,31 @@ class PayoutManager:
                         item['deposit_address'], # EVR change address (back to listing)
                         item['deposit_address']  # Asset change address (back to listing)
                     )
-                    logger.info(f"Transfer successful: {result}")
+                    tx_hash = result[0] if isinstance(result, list) else result
+                    logger.info(f"Transfer successful: {tx_hash}")
+                    
+                    # Record outgoing transaction
+                    await conn.execute(
+                        '''
+                        INSERT INTO transaction_entries (
+                            tx_hash, address, entry_type, asset_name,
+                            amount, fee, confirmations, time,
+                            asset_type, asset_message, trusted,
+                            created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+                        ''',
+                        tx_hash,                    # tx_hash
+                        item['deposit_address'],    # address
+                        'send',                     # entry_type
+                        item['asset_name'],         # asset_name
+                        item['amount'],             # amount
+                        Decimal('0'),               # fee
+                        0,                          # confirmations
+                        datetime.now(timezone.utc), # time
+                        'transfer_asset',           # asset_type
+                        '',                         # asset_message
+                        True                        # trusted
+                    )
                     
                     # Update fulfillment info
                     await conn.execute(
@@ -1005,7 +1029,7 @@ class PayoutManager:
                         ''',
                         order_id,
                         item['asset_name'],
-                        result[0] if isinstance(result, list) else result  # Extract first tx hash if result is a list
+                        tx_hash
                     )
                     
                 except Exception as e:
@@ -1024,13 +1048,35 @@ class PayoutManager:
             # Send all EVR payments in one transaction
             try:
                 logger.info(f"Sending EVR payments for order {order_id}: {payments}")
-                result = rpc_client.sendmany(
+                tx_hash = rpc_client.sendmany(
                     "",  # fromaccount
                     payments,  # amounts
                     1,  # minconf
                     f"Order {order_id} payout"  # comment
                 )
-                logger.info(f"EVR payments successful: {result}")
+                logger.info(f"EVR payments successful: {tx_hash}")
+                
+                # Record outgoing EVR transactions
+                for address, amount in payments.items():
+                    await conn.execute(
+                        '''
+                        INSERT INTO transaction_entries (
+                            tx_hash, address, entry_type, asset_name,
+                            amount, fee, confirmations, time,
+                            trusted, created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+                        ''',
+                        tx_hash,                    # tx_hash
+                        address,                    # address
+                        'send',                     # entry_type
+                        'EVR',                      # asset_name
+                        Decimal(str(amount)),       # amount
+                        Decimal('0'),               # fee
+                        0,                          # confirmations
+                        datetime.now(timezone.utc), # time
+                        True                        # trusted
+                    )
+                    
             except Exception as e:
                 logger.error(f"Failed to send EVR payments: {e}")
                 raise PayoutError(f"Failed to send EVR payments: {str(e)}")
@@ -1181,21 +1227,30 @@ class PayoutManager:
                         item['deposit_address'], # EVR change address (back to listing)
                         item['deposit_address']  # Asset change address (back to listing)
                     )
-                    logger.info(f"Transfer successful: {result}")
+                    tx_hash = result[0] if isinstance(result, list) else result
+                    logger.info(f"Transfer successful: {tx_hash}")
                     
-                    # Update fulfillment info
+                    # Record outgoing transaction
                     await conn.execute(
                         '''
-                        UPDATE cart_order_items 
-                        SET 
-                            fulfillment_time = now(),
-                            fulfillment_tx_hash = $3,
-                            updated_at = now()
-                        WHERE cart_order_id = $1 AND asset_name = $2
+                        INSERT INTO transaction_entries (
+                            tx_hash, address, entry_type, asset_name,
+                            amount, fee, confirmations, time,
+                            asset_type, asset_message, trusted,
+                            created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
                         ''',
-                        cart_order_id,
-                        item['asset_name'],
-                        result[0] if isinstance(result, list) else result  # Extract first tx hash if result is a list
+                        tx_hash,                    # tx_hash
+                        item['deposit_address'],    # address
+                        'send',                     # entry_type
+                        item['asset_name'],         # asset_name
+                        item['amount'],             # amount
+                        Decimal('0'),               # fee
+                        0,                          # confirmations
+                        datetime.now(timezone.utc), # time
+                        'transfer_asset',           # asset_type
+                        '',                         # asset_message
+                        True                        # trusted
                     )
                     
                     # Record sale
@@ -1237,13 +1292,35 @@ class PayoutManager:
             # Send all EVR payments in one transaction
             try:
                 logger.info(f"Sending EVR payments for cart order {cart_order_id}: {payments}")
-                result = rpc_client.sendmany(
+                tx_hash = rpc_client.sendmany(
                     "",  # fromaccount
                     payments,  # amounts
                     1,  # minconf
                     f"Cart order {cart_order_id} payout"  # comment
                 )
-                logger.info(f"EVR payments successful: {result}")
+                logger.info(f"EVR payments successful: {tx_hash}")
+                
+                # Record outgoing EVR transactions
+                for address, amount in payments.items():
+                    await conn.execute(
+                        '''
+                        INSERT INTO transaction_entries (
+                            tx_hash, address, entry_type, asset_name,
+                            amount, fee, confirmations, time,
+                            trusted, created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+                        ''',
+                        tx_hash,                    # tx_hash
+                        address,                    # address
+                        'send',                     # entry_type
+                        'EVR',                      # asset_name
+                        Decimal(str(amount)),       # amount
+                        Decimal('0'),               # fee
+                        0,                          # confirmations
+                        datetime.now(timezone.utc), # time
+                        True                        # trusted
+                    )
+                    
             except Exception as e:
                 logger.error(f"Failed to send EVR payments: {e}")
                 raise PayoutError(f"Failed to send EVR payments: {str(e)}")

@@ -5,7 +5,9 @@ import listings
 from fastapi.responses import JSONResponse
 from typing import Optional, List
 from decimal import Decimal
-from fastapi import Query, HTTPException, status
+from fastapi import Query, HTTPException, status, Body
+from pydantic import BaseModel
+from listings.withdraw import WithdrawError
 
 """ Getters """
 @app.get("/listings") # Get all listings with pagination metadata
@@ -300,7 +302,7 @@ async def create_listing():
             detail=str(e)
         )
 
-@app.post("/listings/{listing_id}")
+@app.post("/listings/by-id/{listing_id}")
 async def update_listing(listing_id: str):
     try:
         return await listings.update_listing(listing_id)
@@ -315,7 +317,7 @@ async def update_listing(listing_id: str):
             detail=str(e)
         )
 
-@app.delete("/listings/{listing_id}")
+@app.delete("/listings/by-id/{listing_id}")
 async def delete_listing(listing_id: str):
     try:
         return await listings.delete_listing(listing_id)
@@ -335,6 +337,56 @@ async def delete_listing(listing_id: str):
 async def create_test_listing():
     try:
         return await listings.create_test_listing()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+class WithdrawRequest(BaseModel):
+    """Request model for withdrawing from a listing."""
+    asset_name: str
+    amount: Decimal
+    to_address: str
+
+@app.post("/listings/{listing_id}/withdraw")
+async def withdraw_from_listing(
+    listing_id: str,
+    withdraw_request: WithdrawRequest
+):
+    """Withdraw assets from a listing.
+    
+    Args:
+        listing_id: The listing UUID
+        withdraw_request: The withdrawal details containing:
+            - asset_name: Name of asset to withdraw
+            - amount: Amount to withdraw
+            - to_address: Address to send assets to
+    """
+    try:
+        result = await listings.withdraw(
+            listing_id=listing_id,
+            asset_name=withdraw_request.asset_name,
+            amount=withdraw_request.amount,
+            to_address=withdraw_request.to_address
+        )
+        return result
+    except WithdrawError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(e)
+            )
+        elif "insufficient balance" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

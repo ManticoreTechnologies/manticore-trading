@@ -206,6 +206,19 @@ class TransactionMonitor:
                 bip125_replaceable = wallet_tx.get('bip125-replaceable', 'no') == 'yes'
                 fee = abs(wallet_tx.get('fee', 0)) if wallet_tx.get('fee') else 0
 
+                # Extract input addresses
+                input_addresses = set()
+                for vin in tx_data.get('vin', []):
+                    if 'txid' in vin:
+                        try:
+                            prev_tx = getrawtransaction(vin['txid'], True)
+                            if 'vout' in vin and vin['vout'] < len(prev_tx.get('vout', [])):
+                                prev_vout = prev_tx['vout'][vin['vout']]
+                                if 'addresses' in prev_vout.get('scriptPubKey', {}):
+                                    input_addresses.update(prev_vout['scriptPubKey']['addresses'])
+                        except Exception as e:
+                            logger.warning(f"Failed to get input address for {vin.get('txid')}: {e}")
+
                 async with self.pool.acquire() as conn:
                     # Get all listing and order deposit addresses
                     listing_addresses = await conn.fetch(
@@ -238,9 +251,16 @@ class TransactionMonitor:
                 # Store entries for regular EVR transactions
                 entries = []
                 for detail in wallet_tx.get('details', []):
+                    # Only process receive entries for tracked addresses
                     if (detail.get('address') and 
                         detail['address'] in tracked_addresses and
-                        detail['category'] == 'receive'):  # Only process receive entries for tracked addresses
+                        detail['category'] == 'receive'):
+                        
+                        # Skip if this is a change output (address is both input and output)
+                        if detail['address'] in input_addresses:
+                            logger.debug(f"Skipping change output for {detail['address']}")
+                            continue
+                            
                         # Use Decimal for precise arithmetic
                         amount = quantize_amount(Decimal(str(abs(detail.get('amount', 0)))))
                         fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')
@@ -261,9 +281,16 @@ class TransactionMonitor:
                 
                 # Store entries for asset transactions
                 for asset_detail in wallet_tx.get('asset_details', []):
+                    # Only process receive entries for tracked addresses
                     if (asset_detail.get('destination') and 
                         asset_detail['destination'] in tracked_addresses and
-                        asset_detail['category'] == 'receive'):  # Only process receive entries for tracked addresses
+                        asset_detail['category'] == 'receive'):
+                        
+                        # Skip if this is a change output (address is both input and output)
+                        if asset_detail['destination'] in input_addresses:
+                            logger.debug(f"Skipping change output for {asset_detail['destination']}")
+                            continue
+                            
                         # Use Decimal for precise arithmetic
                         amount = quantize_amount(Decimal(str(abs(asset_detail.get('amount', 0)))))
                         fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')

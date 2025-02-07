@@ -67,12 +67,44 @@
             border-radius: 4px;
             overflow-x: auto;
         }
+        .section-nav {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .section-nav ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        .section-nav li {
+            margin: 5px 0;
+        }
+        .section-nav a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        .section-nav a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
     <h1>Manticore Trading API Documentation</h1>
+
+    <div class="section-nav">
+        <h3>Quick Navigation</h3>
+        <ul>
+            <li><a href="#listings">Listings Endpoints</a></li>
+            <li><a href="#transactions">Transaction Endpoints</a></li>
+            <li><a href="#management">Listing Management Endpoints</a></li>
+            <li><a href="#operations">Listing Operations</a></li>
+            <li><a href="#testing">Testing Endpoints</a></li>
+            <li><a href="#formats">Response Formats</a></li>
+        </ul>
+    </div>
     
-    <h2>Listings Endpoints</h2>
+    <h2 id="listings">Listings Endpoints</h2>
 
     <div class="endpoint">
         <span class="method get">GET</span>
@@ -172,7 +204,7 @@
         </div>
     </div>
 
-    <h2>Transaction Endpoints</h2>
+    <h2 id="transactions">Transaction Endpoints</h2>
 
     <div class="endpoint">
         <span class="method get">GET</span>
@@ -186,7 +218,7 @@
             <h4>Query Parameters:</h4>
             <ul>
                 <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
                 <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
                 <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
                 <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
@@ -206,7 +238,7 @@
             <h4>Query Parameters:</h4>
             <ul>
                 <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
                 <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
                 <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
                 <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
@@ -226,7 +258,7 @@
             <h4>Query Parameters:</h4>
             <ul>
                 <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
                 <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
                 <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
                 <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
@@ -234,7 +266,7 @@
         </div>
     </div>
 
-    <h2>Listing Management Endpoints</h2>
+    <h2 id="management">Listing Management Endpoints</h2>
 
     <div class="endpoint">
         <span class="method post">POST</span>
@@ -264,7 +296,7 @@
 
     <div class="endpoint">
         <span class="method post">POST</span>
-        <span class="path">/listings/{listing_id}</span>
+        <span class="path">/listings/by-id/{listing_id}</span>
         <p>Update an existing listing</p>
         <div class="params">
             <h4>Path Parameters:</h4>
@@ -284,7 +316,7 @@
 
     <div class="endpoint">
         <span class="method delete">DELETE</span>
-        <span class="path">/listings/{listing_id}</span>
+        <span class="path">/listings/by-id/{listing_id}</span>
         <p>Delete a listing</p>
         <div class="params">
             <h4>Path Parameters:</h4>
@@ -294,7 +326,55 @@
         </div>
     </div>
 
-    <h2>Response Formats</h2>
+    <h2 id="operations">Listing Operations</h2>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/listings/{listing_id}/withdraw</span>
+        <p>Withdraw assets from a listing</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "asset_name": "string",
+    "amount": "decimal",
+    "to_address": "string"
+}</pre>
+            <h4>Response:</h4>
+            <pre>
+{
+    "tx_hash": "string",
+    "amount": "string (decimal)",
+    "asset_name": "string",
+    "from_address": "string",
+    "to_address": "string"
+}</pre>
+        </div>
+    </div>
+
+    <h2 id="testing">Testing Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/test/create-listing</span>
+        <p>Create a test listing with sample data and real addresses</p>
+        <div class="params">
+            <p>This endpoint creates a test listing with:</p>
+            <ul>
+                <li>New Evrmore addresses for seller and listing</li>
+                <li>Sample asset prices and balances</li>
+                <li>Test data for development purposes</li>
+            </ul>
+            <h4>Response:</h4>
+            <p>Returns the created listing object</p>
+        </div>
+    </div>
+
+    <h2 id="formats">Response Formats</h2>
 
     <h3>Listing Object</h3>
     <div class="response">
@@ -344,7 +424,7 @@
 {
     "tx_hash": "string",
     "address": "string",
-    "entry_type": "string (receive)",
+    "entry_type": "string (receive/withdraw)",
     "asset_name": "string",
     "amount": "string (decimal)",
     "fee": "string (decimal)",
@@ -375,6 +455,14 @@
         "page": "integer",
         "total_pages": "integer"
     }
+}</pre>
+    </div>
+
+    <h3>Error Response</h3>
+    <div class="response">
+        <pre>
+{
+    "detail": "string (error message)"
 }</pre>
     </div>
 
