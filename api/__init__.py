@@ -137,6 +137,7 @@ class CreateListing(BaseModel):
     description: Optional[str] = Field(None, description="Optional listing description")
     image_ipfs_hash: Optional[str] = Field(None, description="Optional IPFS hash for listing image")
     prices: List[PriceSpec] = Field(..., description="List of price specifications")
+    tags: Optional[List[str]] = Field(None, description="Optional list of tags for the listing")
 
 class OrderItem(BaseModel):
     """Item in an order"""
@@ -213,7 +214,8 @@ async def create_listing(
             name=listing.name,
             description=listing.description,
             image_ipfs_hash=listing.image_ipfs_hash,
-            prices=[price.dict() for price in listing.prices]
+            prices=[price.dict() for price in listing.prices],
+            tags=listing.tags
         )
     except ListingError as e:
         logger.error(f"ListingError: {str(e)}")
@@ -258,14 +260,15 @@ async def search_listings(
     min_price_evr: Optional[Decimal] = Query(None, description="Minimum EVR price"),
     max_price_evr: Optional[Decimal] = Query(None, description="Maximum EVR price"),
     status: Optional[str] = Query(None, description="Filter by listing status"),
+    tags: Optional[List[str]] = Query(None, description="Filter by tags (matches any)"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     manager: ListingManager = Depends(get_listing_manager)
 ) -> Dict[str, Any]:
     """Search listings with various filters."""
     logger.info(
-        "Searching listings with params: search=%r, seller=%r, asset=%r, price_range=%r-%r, status=%r, limit=%d, offset=%d",
-        search_term, seller_address, asset_name, min_price_evr, max_price_evr, status, limit, offset
+        "Searching listings with params: search=%r, seller=%r, asset=%r, tags=%r, price_range=%r-%r, status=%r, limit=%d, offset=%d",
+        search_term, seller_address, asset_name, tags, min_price_evr, max_price_evr, status, limit, offset
     )
     try:
         results = await manager.search_listings(
@@ -275,10 +278,11 @@ async def search_listings(
             min_price_evr=min_price_evr,
             max_price_evr=max_price_evr,
             status=status,
+            tags=tags,
             limit=limit,
             offset=offset
         )
-        logger.info("Search returned %d results", len(results))
+        logger.info("Search returned %d results", len(results['listings']))
         return results
     except Exception as e:
         logger.exception("Error searching listings: %s", str(e))

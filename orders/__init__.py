@@ -83,167 +83,201 @@ class OrderManager:
         buyer_address: str,
         items: List[Dict[str, Decimal]]
     ) -> Dict:
-        """Create a new order for listing items.
+        """Create a new order for a listing."""
+        await self.ensure_pool()
         
-        Args:
-            listing_id: UUID of the listing to order from
-            buyer_address: Buyer's payment address
-            items: List of items to order with asset_name and amount
-            
-        Returns:
-            Dict containing the created order details
-            
-        Raises:
-            ListingNotFoundError: If listing not found or inactive
-            AssetNotFoundError: If asset not found in listing
-            InsufficientBalanceError: If listing has insufficient balance
-            DatabaseError: If database operation fails
-        """
-        logger.info(f"Starting order creation for listing {listing_id}")
-        
-        # Get payment address before starting transaction
         try:
-            logger.debug("Getting new payment address from RPC")
-            payment_address = rpc_client.getnewaddress()
-            logger.debug(f"Got payment address: {payment_address}")
-        except Exception as e:
-            logger.error(f"RPC error getting payment address: {e}")
-            raise OrderError(f"Failed to get payment address: {e}")
-
-        try:
-            await self.ensure_pool()
-
-            # Verify listing exists in its own transaction
+            # First verify the listing exists and get its details
             async with self.pool.acquire() as conn:
                 listing = await conn.fetchrow(
+                    'SELECT * FROM listings WHERE id = $1',
+                    listing_id
+                )
+                if not listing:
+                    raise ListingNotFoundError(f"Listing {listing_id} not found")
+                
+                # Get prices and units for all requested assets
+                prices = {}
+                for item in items:
+                    price_row = await conn.fetchrow(
+                        '''
+                        SELECT price_evr, price_asset_name, price_asset_amount, units
+                        FROM listing_prices 
+                        WHERE listing_id = $1 AND asset_name = $2
+                        ''',
+                        listing_id,
+                        item['asset_name']
+                    )
+                    if not price_row:
+                        raise AssetNotFoundError(
+                            f"Asset {item['asset_name']} not available in listing {listing_id}"
+                        )
+                    prices[item['asset_name']] = price_row
+                    
+                    # Validate amount has correct number of decimal places
+                    amount_str = str(item['amount'])
+                    decimal_places = len(amount_str.split('.')[-1]) if '.' in amount_str else 0
+                    if decimal_places > price_row['units']:
+                        raise OrderError(
+                            f"Invalid amount for {item['asset_name']}: "
+                            f"maximum {price_row['units']} decimal places allowed"
+                        )
+                
+                # Get current balances
+                balances = await conn.fetch(
                     '''
-                    SELECT id, seller_address 
-                    FROM listings 
-                    WHERE id = $1 AND status = 'active'
+                    SELECT asset_name, confirmed_balance, units
+                    FROM listing_balances 
+                    WHERE listing_id = $1
                     ''',
                     listing_id
                 )
+                balance_map = {
+                    b['asset_name']: {
+                        'confirmed': b['confirmed_balance'],
+                        'units': b['units']
+                    }
+                    for b in balances
+                }
                 
-                if not listing:
-                    raise ListingNotFoundError(f"Listing {listing_id} not found or inactive")
-                
-                logger.debug(f"Found active listing: {listing['id']}")
-
-            # Check balances and get prices for all items
-            total_price = Decimal(0)
-            order_items = []
-            
-            for item in items:
-                asset_name = item['asset_name']
-                amount = item['amount']
-                
-                logger.debug(f"Checking balance for {asset_name}")
-                
-                # Get current balance and price in its own transaction
-                async with self.pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        '''
-                        SELECT 
-                            lb.confirmed_balance,
-                            lb.pending_balance,
-                            lp.price_evr
-                        FROM listing_balances lb
-                        JOIN listing_prices lp ON 
-                            lp.listing_id = lb.listing_id AND
-                            lp.asset_name = lb.asset_name
-                        WHERE lb.listing_id = $1 AND lb.asset_name = $2
-                        ''',
-                        listing_id,
-                        asset_name
-                    )
-                    
-                    if not row:
-                        raise AssetNotFoundError(
-                            f"Asset {asset_name} not found in listing {listing_id}"
-                        )
-                        
-                    if row['confirmed_balance'] < amount:
+                # Verify sufficient balance for each item
+                for item in items:
+                    asset_name = item['asset_name']
+                    if asset_name not in balance_map:
                         raise InsufficientBalanceError(
-                            asset_name,
-                            row['confirmed_balance'],
-                            amount
+                            asset_name, Decimal('0'), item['amount']
                         )
                     
-                    logger.debug(f"Balance check passed for {asset_name}")
-                        
-                    price = row['price_evr'] * amount
-                    total_price += price
-                    
-                    order_items.append({
-                        'asset_name': asset_name,
-                        'amount': amount,
-                        'price_evr': price
-                    })
+                    balance = balance_map[asset_name]['confirmed']
+                    if balance < item['amount']:
+                        raise InsufficientBalanceError(
+                            asset_name, balance, item['amount']
+                        )
                 
-            # Calculate fee
-            fee = total_price * DEFAULT_FEE_PERCENT
-            logger.debug(f"Calculated total price: {total_price} EVR, fee: {fee} EVR")
-            
-            # Create order in its own transaction
-            async with self.pool.acquire() as conn:
-                order = await conn.fetchrow(
-                    '''
-                    INSERT INTO orders (
+                # Get payment address before starting transaction
+                try:
+                    logger.debug("Getting new payment address from RPC")
+                    payment_address = rpc_client.getnewaddress()
+                    logger.debug(f"Got payment address: {payment_address}")
+                except Exception as e:
+                    logger.error(f"RPC error getting payment address: {e}")
+                    raise OrderError(f"Failed to get payment address: {e}")
+
+                # Check balances and get prices for all items
+                total_price = Decimal(0)
+                order_items = []
+                
+                for item in items:
+                    asset_name = item['asset_name']
+                    amount = item['amount']
+                    
+                    logger.debug(f"Checking balance for {asset_name}")
+                    
+                    # Get current balance and price in its own transaction
+                    async with self.pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            '''
+                            SELECT 
+                                lb.confirmed_balance,
+                                lb.pending_balance,
+                                lp.price_evr
+                            FROM listing_balances lb
+                            JOIN listing_prices lp ON 
+                                lp.listing_id = lb.listing_id AND
+                                lp.asset_name = lb.asset_name
+                            WHERE lb.listing_id = $1 AND lb.asset_name = $2
+                            ''',
+                            listing_id,
+                            asset_name
+                        )
+                        
+                        if not row:
+                            raise AssetNotFoundError(
+                                f"Asset {asset_name} not found in listing {listing_id}"
+                            )
+                            
+                        if row['confirmed_balance'] < amount:
+                            raise InsufficientBalanceError(
+                                asset_name,
+                                row['confirmed_balance'],
+                                amount
+                            )
+                        
+                        logger.debug(f"Balance check passed for {asset_name}")
+                            
+                        price = row['price_evr'] * amount
+                        total_price += price
+                        
+                        order_items.append({
+                            'asset_name': asset_name,
+                            'amount': amount,
+                            'price_evr': price
+                        })
+                
+                # Calculate fee
+                fee = total_price * DEFAULT_FEE_PERCENT
+                logger.debug(f"Calculated total price: {total_price} EVR, fee: {fee} EVR")
+                
+                # Create order in its own transaction
+                async with self.pool.acquire() as conn:
+                    order = await conn.fetchrow(
+                        '''
+                        INSERT INTO orders (
+                            listing_id,
+                            buyer_address,
+                            payment_address
+                        ) VALUES ($1, $2, $3)
+                        RETURNING *
+                        ''',
                         listing_id,
                         buyer_address,
                         payment_address
-                    ) VALUES ($1, $2, $3)
-                    RETURNING *
-                    ''',
-                    listing_id,
-                    buyer_address,
-                    payment_address
-                )
-                logger.debug(f"Created order: {order['id']}")
-            
-            # Create order items and balances in separate transactions
-            for item in order_items:
-                # Calculate fee for this item
-                item_fee = item['price_evr'] * DEFAULT_FEE_PERCENT
+                    )
+                    logger.debug(f"Created order: {order['id']}")
                 
-                async with self.pool.acquire() as conn:
-                    # Create order item
-                    await conn.execute(
-                        '''
-                        INSERT INTO order_items (
-                            order_id,
-                            asset_name,
-                            amount,
-                            price_evr,
-                            fee_evr
-                        ) VALUES ($1, $2, $3, $4, $5)
-                        ''',
-                        order['id'],
-                        item['asset_name'],
-                        item['amount'],
-                        item['price_evr'],
-                        item_fee
-                    )
+                # Create order items and balances in separate transactions
+                for item in order_items:
+                    # Calculate fee for this item
+                    item_fee = item['price_evr'] * DEFAULT_FEE_PERCENT
                     
-                    # Initialize order balance entry
-                    await conn.execute(
-                        '''
-                        INSERT INTO order_balances (
-                            order_id,
-                            asset_name,
-                            confirmed_balance,
-                            pending_balance
-                        ) VALUES ($1, $2, 0, 0)
-                        ''',
-                        order['id'],
-                        item['asset_name']
-                    )
-            
-            # Get full order details in its own transaction
-            order_details = await self.get_order(order['id'])
-            
-            logger.info(f"Order {order['id']} created successfully")
-            return order_details
+                    async with self.pool.acquire() as conn:
+                        # Create order item
+                        await conn.execute(
+                            '''
+                            INSERT INTO order_items (
+                                order_id,
+                                asset_name,
+                                amount,
+                                price_evr,
+                                fee_evr
+                            ) VALUES ($1, $2, $3, $4, $5)
+                            ''',
+                            order['id'],
+                            item['asset_name'],
+                            item['amount'],
+                            item['price_evr'],
+                            item_fee
+                        )
+                        
+                        # Initialize order balance entry
+                        await conn.execute(
+                            '''
+                            INSERT INTO order_balances (
+                                order_id,
+                                asset_name,
+                                confirmed_balance,
+                                pending_balance
+                            ) VALUES ($1, $2, 0, 0)
+                            ''',
+                            order['id'],
+                            item['asset_name']
+                        )
+                
+                # Get full order details in its own transaction
+                order_details = await self.get_order(order['id'])
+                
+                logger.info(f"Order {order['id']} created successfully")
+                return order_details
                 
         except PostgresError as e:
             logger.error(f"Database error creating order: {e}")
@@ -657,11 +691,12 @@ class OrderManager:
                 '''
                 SELECT 
                     coi.*,
-                    l.name as listing_name,
-                    l.seller_address
+                    l.seller_address,
+                    l.deposit_address,
+                    l.name as listing_name
                 FROM cart_order_items coi
                 JOIN listings l ON l.id = coi.listing_id
-                WHERE cart_order_id = $1
+                WHERE coi.cart_order_id = $1
                 ''',
                 cart_order_id
             )
@@ -791,7 +826,7 @@ class PayoutManager:
                     SELECT o.*, op.failure_count, op.last_attempt_time
                     FROM orders o
                     LEFT JOIN order_payouts op ON o.id = op.order_id
-                    WHERE o.status = 'paid'
+                    WHERE o.status IN ('paid', 'sale_pending')
                     AND (
                         op.id IS NULL 
                         OR (
@@ -813,7 +848,7 @@ class PayoutManager:
                     SELECT co.*, cop.failure_count, cop.last_attempt_time
                     FROM cart_orders co
                     LEFT JOIN cart_order_payouts cop ON co.id = cop.cart_order_id
-                    WHERE co.status = 'paid'
+                    WHERE co.status IN ('paid', 'sale_pending')
                     AND (
                         cop.id IS NULL 
                         OR (
@@ -842,7 +877,7 @@ class PayoutManager:
                     
                     if failure_count < MAX_PAYOUT_ATTEMPTS and (
                         not last_attempt or 
-                        (datetime.now(timezone.utc) - last_attempt).total_seconds() > 3600
+                        (datetime.now(timezone.utc) - last_attempt.replace(tzinfo=timezone.utc)).total_seconds() > 3600
                     ):
                         order['order_type'] = 'regular'
                         eligible_orders.append(order)
@@ -859,7 +894,7 @@ class PayoutManager:
                     
                     if failure_count < MAX_PAYOUT_ATTEMPTS and (
                         not last_attempt or 
-                        (datetime.now(timezone.utc) - last_attempt).total_seconds() > 3600
+                        (datetime.now(timezone.utc) - last_attempt.replace(tzinfo=timezone.utc)).total_seconds() > 3600
                     ):
                         order['order_type'] = 'cart'
                         eligible_orders.append(order)
@@ -989,16 +1024,11 @@ class PayoutManager:
             # Send all EVR payments in one transaction
             try:
                 logger.info(f"Sending EVR payments for order {order_id}: {payments}")
-                # Parameters in exact order from docs:
-                # 1. fromaccount (string, should be "")
-                # 2. amounts (object)
-                # 3. minconf (numeric, optional)
-                # 4. comment (string, optional)
                 result = rpc_client.sendmany(
-                    "",  # 1
-                    payments,  # 2
-                    1,  # 3
-                    f"Order {order_id} payout"  # 4
+                    "",  # fromaccount
+                    payments,  # amounts
+                    1,  # minconf
+                    f"Order {order_id} payout"  # comment
                 )
                 logger.info(f"EVR payments successful: {result}")
             except Exception as e:
@@ -1037,24 +1067,9 @@ class PayoutManager:
                 order_id
             )
             
-            # Update listing balances to subtract sold amounts
-            for item in items:
-                await conn.execute(
-                    '''
-                    UPDATE listing_balances
-                    SET 
-                        confirmed_balance = confirmed_balance - $3,
-                        updated_at = now()
-                    WHERE listing_id = $1 AND asset_name = $2
-                    ''',
-                    item['listing_id'],
-                    item['asset_name'],
-                    item['amount']
-                )
-                logger.info(
-                    f"Updated listing {item['listing_id']} balance: "
-                    f"subtracted {item['amount']} {item['asset_name']}"
-                )
+            # Let the blockchain monitor handle balance updates
+            # Wait a moment for the transaction to be seen
+            await asyncio.sleep(2)
             
             logger.info(f"Successfully processed payout for order {order_id}")
             
@@ -1105,6 +1120,7 @@ class PayoutManager:
             SELECT 
                 coi.*,
                 l.seller_address,
+                l.deposit_address,
                 l.name as listing_name
             FROM cart_order_items coi
             JOIN listings l ON l.id = coi.listing_id
@@ -1264,24 +1280,9 @@ class PayoutManager:
                 cart_order_id
             )
             
-            # Update listing balances to subtract sold amounts
-            for item in items:
-                await conn.execute(
-                    '''
-                    UPDATE listing_balances
-                    SET 
-                        confirmed_balance = confirmed_balance - $3,
-                        updated_at = now()
-                    WHERE listing_id = $1 AND asset_name = $2
-                    ''',
-                    item['listing_id'],
-                    item['asset_name'],
-                    item['amount']
-                )
-                logger.info(
-                    f"Updated listing {item['listing_id']} balance: "
-                    f"subtracted {item['amount']} {item['asset_name']}"
-                )
+            # Let the blockchain monitor handle balance updates
+            # Wait a moment for the transaction to be seen
+            await asyncio.sleep(2)
             
             logger.info(f"Successfully processed payout for cart order {cart_order_id}")
             

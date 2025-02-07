@@ -78,6 +78,7 @@ schema = {
                 {'name': 'ipfs_hash', 'type': 'TEXT'},
                 {'name': 'price_asset_name', 'type': 'TEXT'},
                 {'name': 'price_asset_amount', 'type': 'DECIMAL'},
+                {'name': 'units', 'type': 'INT2', 'nullable': False, 'default': '8'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
                 {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
             ],
@@ -93,6 +94,7 @@ schema = {
                 {'name': 'asset_name', 'type': 'TEXT'},
                 {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
                 {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'units', 'type': 'INT2', 'nullable': False, 'default': '8'},
                 {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
                 {'name': 'last_confirmed_tx_time', 'type': 'TIMESTAMP'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
@@ -124,7 +126,7 @@ schema = {
                 {'name': 'idx_orders_payment_address', 'columns': ['payment_address'], 'unique': True}
             ],
             'checks': [
-                {'name': 'valid_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"}
+                {'name': 'valid_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'sale_pending', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"}
             ]
         },
         {
@@ -157,6 +159,7 @@ schema = {
                 {'name': 'asset_name', 'type': 'TEXT'},
                 {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
                 {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'units', 'type': 'INT2', 'nullable': False, 'default': '8'},
                 {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
                 {'name': 'last_confirmed_tx_time', 'type': 'TIMESTAMP'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
@@ -237,7 +240,7 @@ schema = {
                 {'name': 'idx_cart_orders_payment_address', 'columns': ['payment_address'], 'unique': True}
             ],
             'checks': [
-                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded')"}
+                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'sale_pending', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded', 'refund_failed', 'manual_intervention_required')"}
             ]
         },
         {
@@ -272,6 +275,7 @@ schema = {
                 {'name': 'asset_name', 'type': 'TEXT'},
                 {'name': 'confirmed_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
                 {'name': 'pending_balance', 'type': 'DECIMAL', 'nullable': False, 'default': '0'},
+                {'name': 'units', 'type': 'INT2', 'nullable': False, 'default': '8'},
                 {'name': 'last_confirmed_tx_hash', 'type': 'TEXT'},
                 {'name': 'last_confirmed_tx_time', 'type': 'TIMESTAMP'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
@@ -306,7 +310,7 @@ schema = {
                 {'name': 'idx_cart_order_payouts_attempt', 'columns': ['last_attempt_time']}
             ],
             'checks': [
-                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded', 'refund_failed', 'manual_intervention_required')"}
+                {'name': 'valid_cart_order_status', 'expression': "status IN ('pending', 'partially_paid', 'paid', 'sale_pending', 'confirming', 'fulfilling', 'completed', 'cancelled', 'refunded', 'refund_failed', 'manual_intervention_required')"}
             ]
         }
     ],
@@ -319,9 +323,30 @@ schema = {
             'events': ['INSERT', 'UPDATE'],
             'level': 'ROW',
             'function_body': '''
+                DECLARE
+                    amount_to_add DECIMAL;
                 BEGIN
                     -- Handle both new transactions and confirmation updates
                     IF (NEW).entry_type = 'receive' THEN
+                        -- Calculate the amount to add (handle split transactions)
+                        amount_to_add := CASE 
+                            WHEN (
+                                SELECT COUNT(*) 
+                                FROM transaction_entries 
+                                WHERE tx_hash = (NEW).tx_hash 
+                                AND asset_name = (NEW).asset_name 
+                                AND entry_type = 'receive'
+                            ) > 1 
+                            THEN (NEW).amount / (
+                                SELECT COUNT(*) 
+                                FROM transaction_entries 
+                                WHERE tx_hash = (NEW).tx_hash 
+                                AND asset_name = (NEW).asset_name 
+                                AND entry_type = 'receive'
+                            )
+                            ELSE (NEW).amount
+                        END;
+
                         -- For new transactions, add to pending balance
                         IF TG_OP = 'INSERT' THEN
                             INSERT INTO listing_balances (
@@ -332,23 +357,7 @@ schema = {
                                 l.id,
                                 (NEW).asset_name,
                                 0,
-                                CASE 
-                                    WHEN (
-                                        SELECT COUNT(*) 
-                                        FROM transaction_entries 
-                                        WHERE tx_hash = (NEW).tx_hash 
-                                        AND asset_name = (NEW).asset_name 
-                                        AND entry_type = 'receive'
-                                    ) > 1 
-                                    THEN (NEW).amount / (
-                                        SELECT COUNT(*) 
-                                        FROM transaction_entries 
-                                        WHERE tx_hash = (NEW).tx_hash 
-                                        AND asset_name = (NEW).asset_name 
-                                        AND entry_type = 'receive'
-                                    )
-                                    ELSE (NEW).amount
-                                END,
+                                amount_to_add,
                                 NULL,
                                 NULL,
                                 now(),
@@ -357,69 +366,15 @@ schema = {
                             WHERE l.deposit_address = (NEW).address
                             ON CONFLICT (listing_id, asset_name) DO UPDATE
                             SET 
-                                pending_balance = listing_balances.pending_balance + (
-                                    CASE 
-                                        WHEN (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        ) > 1 
-                                        THEN (NEW).amount / (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        )
-                                        ELSE (NEW).amount
-                                    END
-                                ),
+                                pending_balance = listing_balances.pending_balance + amount_to_add,
                                 updated_at = now();
 
                         -- For confirmation updates
                         ELSIF TG_OP = 'UPDATE' AND (NEW).confirmations >= 2 AND ((OLD).confirmations IS NULL OR (OLD).confirmations < 2) THEN
                             UPDATE listing_balances lb
                             SET 
-                                confirmed_balance = confirmed_balance + (
-                                    CASE 
-                                        WHEN (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        ) > 1 
-                                        THEN (NEW).amount / (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        )
-                                        ELSE (NEW).amount
-                                    END
-                                ),
-                                pending_balance = GREATEST(0, pending_balance - (
-                                    CASE 
-                                        WHEN (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        ) > 1 
-                                        THEN (NEW).amount / (
-                                            SELECT COUNT(*) 
-                                            FROM transaction_entries 
-                                            WHERE tx_hash = (NEW).tx_hash 
-                                            AND asset_name = (NEW).asset_name 
-                                            AND entry_type = 'receive'
-                                        )
-                                        ELSE (NEW).amount
-                                    END
-                                )),
+                                confirmed_balance = confirmed_balance + amount_to_add,
+                                pending_balance = GREATEST(0, pending_balance - amount_to_add),
                                 last_confirmed_tx_hash = (NEW).tx_hash,
                                 last_confirmed_tx_time = (NEW).time,
                                 updated_at = now()
@@ -625,7 +580,25 @@ schema = {
                 BEGIN
                     -- Only process when status changes to 'paid'
                     IF TG_OP = 'UPDATE' AND (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
-                        -- Insert sale records for each item in the order
+                        -- First verify we have sufficient balance
+                        IF EXISTS (
+                            SELECT 1
+                            FROM order_items oi
+                            JOIN listing_balances lb ON lb.listing_id = (NEW).listing_id 
+                                AND lb.asset_name = oi.asset_name
+                            WHERE oi.order_id = (NEW).id
+                            AND lb.confirmed_balance < oi.amount
+                        ) THEN
+                            RAISE EXCEPTION 'Insufficient balance for sale';
+                        END IF;
+
+                        -- Mark order as sale pending
+                        UPDATE orders
+                        SET status = 'sale_pending',
+                            updated_at = now()
+                        WHERE id = (NEW).id;
+
+                        -- Record the sale but don't deduct balance yet
                         INSERT INTO sale_history (
                             listing_id,
                             order_id,
@@ -649,6 +622,50 @@ schema = {
                         JOIN order_items oi ON oi.order_id = o.id
                         JOIN listings l ON l.id = o.listing_id
                         WHERE o.id = (NEW).id;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'update_balances_on_payout_trigger',
+            'function_name': 'update_balances_on_payout',
+            'table': 'order_payouts',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Only process when payout succeeds
+                    IF (NEW).success = true AND (OLD IS NULL OR (OLD).success = false) THEN
+                        -- Get the order
+                        UPDATE listing_balances lb
+                        SET 
+                            confirmed_balance = confirmed_balance - oi.amount,
+                            updated_at = now()
+                        FROM order_items oi
+                        JOIN orders o ON o.id = oi.order_id
+                        WHERE lb.listing_id = o.listing_id
+                        AND lb.asset_name = oi.asset_name
+                        AND oi.order_id = (NEW).order_id;
+
+                        -- Update order status to completed
+                        UPDATE orders
+                        SET status = 'completed',
+                            updated_at = now()
+                        WHERE id = (NEW).order_id;
+                    -- Handle payout failure
+                    ELSIF (NEW).failure_count >= 3 THEN
+                        -- Delete sale record
+                        DELETE FROM sale_history
+                        WHERE order_id = (NEW).order_id;
+
+                        -- Reset order status to paid
+                        UPDATE orders
+                        SET status = 'paid',
+                            updated_at = now()
+                        WHERE id = (NEW).order_id;
                     END IF;
                     
                     RETURN NEW;
@@ -846,7 +863,25 @@ schema = {
                 BEGIN
                     -- Only process when status changes to 'paid'
                     IF TG_OP = 'UPDATE' AND (NEW).status = 'paid' AND (OLD).status != 'paid' THEN
-                        -- Insert sale records for each item in the cart order
+                        -- First verify we have sufficient balance
+                        IF EXISTS (
+                            SELECT 1
+                            FROM cart_order_items coi
+                            JOIN listing_balances lb ON lb.listing_id = coi.listing_id 
+                                AND lb.asset_name = coi.asset_name
+                            WHERE coi.cart_order_id = (NEW).id
+                            AND lb.confirmed_balance < coi.amount
+                        ) THEN
+                            RAISE EXCEPTION 'Insufficient balance for cart sale';
+                        END IF;
+
+                        -- Mark cart order as sale pending
+                        UPDATE cart_orders
+                        SET status = 'sale_pending',
+                            updated_at = now()
+                        WHERE id = (NEW).id;
+
+                        -- Record the sale but don't deduct balance yet
                         INSERT INTO sale_history (
                             listing_id,
                             cart_order_id,
@@ -869,6 +904,50 @@ schema = {
                         FROM cart_order_items coi
                         JOIN listings l ON l.id = coi.listing_id
                         WHERE coi.cart_order_id = (NEW).id;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+            '''
+        },
+        {
+            'name': 'update_balances_on_cart_payout_trigger',
+            'function_name': 'update_balances_on_cart_payout',
+            'table': 'cart_order_payouts',
+            'timing': 'AFTER',
+            'events': ['INSERT', 'UPDATE'],
+            'level': 'ROW',
+            'function_body': '''
+                BEGIN
+                    -- Only process when payout succeeds
+                    IF (NEW).success = true AND (OLD IS NULL OR (OLD).success = false) THEN
+                        -- Get the cart order
+                        UPDATE listing_balances lb
+                        SET 
+                            confirmed_balance = confirmed_balance - coi.amount,
+                            updated_at = now()
+                        FROM cart_order_items coi
+                        JOIN cart_orders co ON co.id = coi.cart_order_id
+                        WHERE lb.listing_id = coi.listing_id
+                        AND lb.asset_name = coi.asset_name
+                        AND coi.cart_order_id = (NEW).cart_order_id;
+
+                        -- Update cart order status to completed
+                        UPDATE cart_orders
+                        SET status = 'completed',
+                            updated_at = now()
+                        WHERE id = (NEW).cart_order_id;
+                    -- Handle payout failure
+                    ELSIF (NEW).failure_count >= 3 THEN
+                        -- Delete sale record
+                        DELETE FROM sale_history
+                        WHERE cart_order_id = (NEW).cart_order_id;
+
+                        -- Reset cart order status to paid
+                        UPDATE cart_orders
+                        SET status = 'paid',
+                            updated_at = now()
+                        WHERE id = (NEW).cart_order_id;
                     END IF;
                     
                     RETURN NEW;

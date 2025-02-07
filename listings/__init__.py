@@ -77,7 +77,8 @@ class ListingManager:
         name: str,
         description: Optional[str] = None,
         image_ipfs_hash: Optional[str] = None,
-        prices: Optional[List[Dict[str, Any]]] = None
+        prices: Optional[List[Dict[str, Any]]] = None,
+        tags: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Create a new listing.
         
@@ -92,6 +93,7 @@ class ListingManager:
                    - price_asset_name: Optional asset name for pricing
                    - price_asset_amount: Optional asset amount for pricing
                    - ipfs_hash: Optional IPFS hash for price-specific content
+            tags: Optional list of tags for the listing
         
         Returns:
             Dict containing the created listing details
@@ -103,7 +105,7 @@ class ListingManager:
         await self.ensure_pool()
         
         try:
-            # Validate all asset names first
+            # Validate all asset names first and get their units
             if prices:
                 for price in prices:
                     asset_name = price['asset_name']
@@ -113,10 +115,45 @@ class ListingManager:
                         if asset_data is None:
                             raise InvalidPriceError(f"Asset not found: {asset_name}")
                             
-                        # If user didn't provide ipfs_hash, use the one from asset data if available
+                        # Store asset units and IPFS data
+                        price['units'] = asset_data.get('units', 8)  # Default to 8 if not specified
                         if not price.get('ipfs_hash') and asset_data.get('ipfs_hash'):
                             price['ipfs_hash'] = asset_data['ipfs_hash']
                             
+                        # Validate price specification
+                        price_evr = price.get('price_evr')
+                        price_asset_name = price.get('price_asset_name')
+                        price_asset_amount = price.get('price_asset_amount')
+                        
+                        # Convert price values to Decimal for validation
+                        if price_evr is not None:
+                            try:
+                                price_evr = Decimal(str(price_evr))
+                                if price_evr <= 0:
+                                    raise InvalidPriceError(f"EVR price must be positive for {asset_name}")
+                                if price_asset_name is not None or price_asset_amount is not None:
+                                    raise InvalidPriceError(f"Cannot specify both EVR price and asset price for {asset_name}")
+                                # Store validated Decimal
+                                price['price_evr'] = price_evr
+                            except (TypeError, ValueError) as e:
+                                raise InvalidPriceError(f"Invalid EVR price format for {asset_name}: {e}")
+                        else:
+                            if bool(price_asset_name) != bool(price_asset_amount):
+                                raise InvalidPriceError(f"Both price_asset_name and price_asset_amount must be provided for {asset_name}")
+                            if price_asset_name is None:
+                                raise InvalidPriceError(f"Either price_evr or asset price must be specified for {asset_name}")
+                            if price_asset_amount is not None:
+                                try:
+                                    price_asset_amount = Decimal(str(price_asset_amount))
+                                    if price_asset_amount <= 0:
+                                        raise InvalidPriceError(f"Asset price amount must be positive for {asset_name}")
+                                    # Store validated Decimal
+                                    price['price_asset_amount'] = price_asset_amount
+                                except (TypeError, ValueError) as e:
+                                    raise InvalidPriceError(f"Invalid asset price format for {asset_name}: {e}")
+                            
+                    except InvalidPriceError:
+                        raise
                     except Exception as e:
                         logger.error(f"Error validating asset {asset_name}: {e}")
                         raise InvalidPriceError(f"Failed to validate asset {asset_name}: {str(e)}")
@@ -131,12 +168,12 @@ class ListingManager:
                     '''
                     INSERT INTO listings (
                         seller_address, listing_address, deposit_address, 
-                        name, description, image_ipfs_hash
-                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                        name, description, image_ipfs_hash, tags
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                     RETURNING id
                     ''',
                     seller_address, listing_address, deposit_address,
-                    name, description, image_ipfs_hash
+                    name, description, image_ipfs_hash, tags
                 )
             
             # Add prices if specified
@@ -150,15 +187,17 @@ class ListingManager:
                             '''
                             INSERT INTO listing_prices (
                                 listing_id, asset_name, price_evr,
-                                price_asset_name, price_asset_amount, ipfs_hash
-                            ) VALUES ($1, $2, $3, $4, $5, $6)
+                                price_asset_name, price_asset_amount, ipfs_hash,
+                                units
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                             ''',
                             listing_id,
                             asset_name,
                             price.get('price_evr'),
                             price.get('price_asset_name'),
                             price.get('price_asset_amount'),
-                            price.get('ipfs_hash')
+                            price.get('ipfs_hash'),
+                            price['units']
                         )
                     
                     # Initialize balance entry
@@ -167,11 +206,12 @@ class ListingManager:
                             '''
                             INSERT INTO listing_balances (
                                 listing_id, asset_name, confirmed_balance,
-                                pending_balance
-                            ) VALUES ($1, $2, 0, 0)
+                                pending_balance, units
+                            ) VALUES ($1, $2, 0, 0, $3)
                             ''',
                             listing_id,
-                            asset_name
+                            asset_name,
+                            price['units']
                         )
             
             # Return full listing details
@@ -222,7 +262,7 @@ class ListingManager:
                 'updated_at': listing['updated_at'].isoformat() if listing['updated_at'] else None
             }
             
-            # Get prices
+            # Get prices with units
             prices = await conn.fetch(
                 'SELECT * FROM listing_prices WHERE listing_id = $1',
                 listing_id
@@ -232,10 +272,13 @@ class ListingManager:
                 'price_evr': str(p['price_evr']) if p['price_evr'] is not None else None,
                 'price_asset_name': p['price_asset_name'],
                 'price_asset_amount': str(p['price_asset_amount']) if p['price_asset_amount'] is not None else None,
-                'ipfs_hash': p['ipfs_hash']
+                'ipfs_hash': p['ipfs_hash'],
+                'units': p.get('units', 8),  # Default to 8 if units not specified
+                'created_at': p['created_at'].isoformat() if p['created_at'] else None,
+                'updated_at': p['updated_at'].isoformat() if p['updated_at'] else None
             } for p in prices]
             
-            # Get balances
+            # Get balances with units
             balances = await conn.fetch(
                 'SELECT * FROM listing_balances WHERE listing_id = $1',
                 listing_id
@@ -244,8 +287,11 @@ class ListingManager:
                 'asset_name': b['asset_name'],
                 'confirmed_balance': str(b['confirmed_balance']) if b['confirmed_balance'] is not None else '0',
                 'pending_balance': str(b['pending_balance']) if b['pending_balance'] is not None else '0',
+                'units': b.get('units', 8),  # Default to 8 if units not specified
                 'last_confirmed_tx_hash': b['last_confirmed_tx_hash'],
-                'last_confirmed_tx_time': b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None
+                'last_confirmed_tx_time': b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None,
+                'created_at': b['created_at'].isoformat() if b['created_at'] else None,
+                'updated_at': b['updated_at'].isoformat() if b['updated_at'] else None
             } for b in balances]
             
             return result
@@ -458,6 +504,7 @@ class ListingManager:
         min_price_evr: Optional[Decimal] = None,
         max_price_evr: Optional[Decimal] = None,
         status: Optional[str] = None,
+        tags: Optional[List[str]] = None,
         limit: int = 50,
         offset: int = 0
     ) -> Dict[str, Any]:
@@ -470,6 +517,7 @@ class ListingManager:
             min_price_evr: Optional minimum EVR price
             max_price_evr: Optional maximum EVR price
             status: Optional listing status to filter by
+            tags: Optional list of tags to filter by (matches any)
             limit: Maximum number of results to return (default: 50)
             offset: Number of results to skip (default: 0)
             
@@ -521,6 +569,14 @@ class ListingManager:
                 query += asset_condition
                 count_query += asset_condition
                 params.append(asset_name)
+                param_idx += 1
+
+            if tags:
+                # Convert tags to array and use ANY to match any of the provided tags
+                tags_condition = f" AND l.tags && ${param_idx}::text[]"
+                query += tags_condition
+                count_query += tags_condition
+                params.append(tags)
                 param_idx += 1
                 
             if min_price_evr is not None:
@@ -577,6 +633,7 @@ class ListingManager:
                                 'description': row['description'],
                                 'image_ipfs_hash': row['image_ipfs_hash'],
                                 'status': row['status'],
+                                'tags': row['tags'].split(',') if row['tags'] else [],  # Convert comma-separated string to list
                                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
                                 'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
                             }
@@ -592,6 +649,7 @@ class ListingManager:
                                 'price_asset_name': p['price_asset_name'],
                                 'price_asset_amount': str(p['price_asset_amount']) if p['price_asset_amount'] is not None else None,
                                 'ipfs_hash': p['ipfs_hash'],
+                                'units': p.get('units', 8),  # Default to 8 if units not specified
                                 'created_at': p['created_at'].isoformat() if p['created_at'] else None,
                                 'updated_at': p['updated_at'].isoformat() if p['updated_at'] else None
                             } for p in prices]
@@ -605,6 +663,7 @@ class ListingManager:
                                 'asset_name': b['asset_name'],
                                 'confirmed_balance': str(b['confirmed_balance']) if b['confirmed_balance'] is not None else '0',
                                 'pending_balance': str(b['pending_balance']) if b['pending_balance'] is not None else '0',
+                                'units': b.get('units', 8),  # Default to 8 if units not specified
                                 'last_confirmed_tx_hash': b['last_confirmed_tx_hash'],
                                 'last_confirmed_tx_time': b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None,
                                 'created_at': b['created_at'].isoformat() if b['created_at'] else None,
@@ -749,8 +808,9 @@ class ListingManager:
                                 '''
                                 INSERT INTO listing_prices (
                                     listing_id, asset_name, price_evr,
-                                    price_asset_name, price_asset_amount, ipfs_hash
-                                ) VALUES ($1, $2, $3, $4, $5, $6)
+                                    price_asset_name, price_asset_amount, ipfs_hash,
+                                    units
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                                 ON CONFLICT (listing_id, asset_name) DO UPDATE
                                 SET 
                                     price_evr = EXCLUDED.price_evr,
@@ -764,7 +824,8 @@ class ListingManager:
                                 price.get('price_evr'),
                                 price.get('price_asset_name'),
                                 price.get('price_asset_amount'),
-                                price.get('ipfs_hash')
+                                price.get('ipfs_hash'),
+                                price.get('units', 8)  # Default to 8 if not specified
                             )
                             
                             # Ensure we have a balance entry for this asset if it's new
@@ -772,12 +833,13 @@ class ListingManager:
                                 '''
                                 INSERT INTO listing_balances (
                                     listing_id, asset_name, confirmed_balance,
-                                    pending_balance
-                                ) VALUES ($1, $2, 0, 0)
+                                    pending_balance, units
+                                ) VALUES ($1, $2, 0, 0, $3)
                                 ON CONFLICT (listing_id, asset_name) DO NOTHING
                                 ''',
                                 listing_id,
-                                price['asset_name']
+                                price['asset_name'],
+                                price['units']
                             )
             
             # Return updated listing details
