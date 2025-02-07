@@ -55,8 +55,9 @@ class UvicornServer:
             app_path,
             host=host,
             port=port,
-            reload=True,
-            log_level="info"
+            reload=False,  # Disable reload to prevent connection pool issues
+            log_level="info",
+            workers=1
         )
         self.server = uvicorn.Server(self.config)
     
@@ -80,19 +81,23 @@ async def run_api():
 async def run_monitor(monitor):
     """Run the blockchain monitor."""
     try:
-        await monitor.start()
+        if monitor:
+            await monitor.start()
     except Exception as e:
         logger.error(f"Monitor error: {e}")
-        raise
+        # Don't raise here, just log the error
+        # This allows the API to run even if monitoring fails
 
 async def run_payout_processor(processor):
     """Run the payout processor."""
     try:
-        logger.info("Starting payout processor task")
-        await processor.process_payouts()
+        if processor:
+            logger.info("Starting payout processor task")
+            await processor.process_payouts()
     except Exception as e:
         logger.error(f"Payout processor error: {e}")
-        raise
+        # Don't raise here, just log the error
+        # This allows the API to run even if payout processing fails
 
 async def main():
     """Run the API server, blockchain monitor, and payout processor."""
@@ -126,8 +131,10 @@ async def main():
                         exc = task.exception()
                         if exc:
                             logger.error(f"Task {task.get_name()} failed with error: {exc}")
-                            should_exit = True
-                            break
+                            # Don't exit on monitor/payout failures
+                            if task.get_name() == "api":
+                                should_exit = True
+                                break
                     except asyncio.CancelledError:
                         pass
             
@@ -140,11 +147,11 @@ async def main():
         # Cleanup
         if monitor:
             logger.info("Stopping blockchain monitor...")
-            monitor.stop()
+            await monitor.stop()
         
         if payout_processor:
             logger.info("Stopping payout processor...")
-            payout_processor.stop()
+            await payout_processor.stop()
         
         if server:
             logger.info("Stopping API server...")

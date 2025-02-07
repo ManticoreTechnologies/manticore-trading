@@ -205,21 +205,52 @@ class TransactionMonitor:
                 trusted = wallet_tx.get('trusted', False)
                 bip125_replaceable = wallet_tx.get('bip125-replaceable', 'no') == 'yes'
                 fee = abs(wallet_tx.get('fee', 0)) if wallet_tx.get('fee') else 0
+
+                async with self.pool.acquire() as conn:
+                    # Get all listing and order deposit addresses
+                    listing_addresses = await conn.fetch(
+                        '''
+                        SELECT deposit_address, listing_address 
+                        FROM listings
+                        '''
+                    )
+                    order_addresses = await conn.fetch(
+                        '''
+                        SELECT payment_address 
+                        FROM orders
+                        '''
+                    )
+                    cart_order_addresses = await conn.fetch(
+                        '''
+                        SELECT payment_address 
+                        FROM cart_orders
+                        '''
+                    )
+
+                    # Create sets for faster lookup
+                    tracked_addresses = set()
+                    for row in listing_addresses:
+                        tracked_addresses.add(row['deposit_address'])
+                        tracked_addresses.add(row['listing_address'])
+                    tracked_addresses.update(row['payment_address'] for row in order_addresses)
+                    tracked_addresses.update(row['payment_address'] for row in cart_order_addresses)
                 
                 # Store entries for regular EVR transactions
                 entries = []
                 for detail in wallet_tx.get('details', []):
-                    if detail.get('address'):  # Only process if we have an address
+                    if (detail.get('address') and 
+                        detail['address'] in tracked_addresses and
+                        detail['category'] == 'receive'):  # Only process receive entries for tracked addresses
                         # Use Decimal for precise arithmetic
                         amount = quantize_amount(Decimal(str(abs(detail.get('amount', 0)))))
                         fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')
                         entries.append({
                             'tx_hash': tx_hash,
                             'address': detail['address'],
-                            'entry_type': detail['category'],  # 'send' or 'receive' relative to our wallet
+                            'entry_type': detail['category'],  # Will always be 'receive'
                             'asset_name': 'EVR',  # Regular EVR transaction
                             'amount': amount,
-                            'fee': fee if detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
+                            'fee': Decimal('0'),  # No fee on receive entries
                             'confirmations': confirmations,
                             'time': time,
                             'vout': detail.get('vout'),
@@ -230,17 +261,19 @@ class TransactionMonitor:
                 
                 # Store entries for asset transactions
                 for asset_detail in wallet_tx.get('asset_details', []):
-                    if asset_detail.get('destination'):  # Only process if we have a destination
+                    if (asset_detail.get('destination') and 
+                        asset_detail['destination'] in tracked_addresses and
+                        asset_detail['category'] == 'receive'):  # Only process receive entries for tracked addresses
                         # Use Decimal for precise arithmetic
                         amount = quantize_amount(Decimal(str(abs(asset_detail.get('amount', 0)))))
                         fee = quantize_amount(Decimal(str(abs(fee)))) if fee else Decimal('0')
                         entries.append({
                             'tx_hash': tx_hash,
                             'address': asset_detail['destination'],
-                            'entry_type': asset_detail['category'],  # 'send' or 'receive' relative to our wallet
+                            'entry_type': asset_detail['category'],  # Will always be 'receive'
                             'asset_name': asset_detail.get('asset_name', 'EVR'),  # Use EVR as default if no asset name
                             'amount': amount,
-                            'fee': fee if asset_detail['category'] == 'send' else Decimal('0'),  # Fee only on send entries
+                            'fee': Decimal('0'),  # No fee on receive entries
                             'confirmations': confirmations,
                             'time': time,
                             'asset_type': asset_detail.get('asset_type'),
@@ -252,7 +285,7 @@ class TransactionMonitor:
                         })
                 
                 if not entries:
-                    logger.warning(f"No valid entries found for transaction {tx_hash}")
+                    logger.debug(f"No relevant entries found for transaction {tx_hash}")
                     return
                 
                 # Store all entries in database

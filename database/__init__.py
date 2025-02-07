@@ -8,8 +8,9 @@ This module handles:
 
 import asyncio
 import logging
-from typing import Optional
-
+import ssl
+from typing import Optional, Dict, Any
+import backoff
 import asyncpg
 from urllib.parse import urlparse, parse_qs
 
@@ -20,11 +21,54 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 _schema_manager: Optional[SchemaManager] = None
 
+def _get_ssl_context() -> ssl.SSLContext:
+    """Create SSL context for CockroachDB Cloud connections."""
+    ssl_context = ssl.create_default_context()
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.check_hostname = True
+    return ssl_context
+
+def _get_connection_kwargs(db_url: str) -> Dict[str, Any]:
+    """Get connection kwargs from database URL.
+    
+    Args:
+        db_url: Database connection URL
+        
+    Returns:
+        Dict of connection parameters
+    """
+    parsed = urlparse(db_url)
+    params = parse_qs(parsed.query)
+    
+    # Start with base SSL-enabled kwargs
+    kwargs = {
+        'ssl': _get_ssl_context(),
+        'server_settings': {
+            'multiple_active_portals_enabled': 'true',
+            'statement_timeout': '300000',  # 5 minutes
+        }
+    }
+    
+    # Add any additional params from URL
+    for key, values in params.items():
+        if key not in ('sslmode', 'ssl'):  # Skip SSL params as we handle those above
+            kwargs[key] = values[0]
+            
+    return kwargs
+
+@backoff.on_exception(
+    backoff.expo,
+    (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.CannotConnectNowError),
+    max_tries=5
+)
 async def create_database_if_not_exists(db_url: str) -> None:
     """Create the database if it doesn't exist.
     
     Args:
         db_url: Database connection URL
+        
+    Raises:
+        Exception: If database creation fails after retries
     """
     try:
         # Parse the URL
@@ -40,7 +84,9 @@ async def create_database_if_not_exists(db_url: str) -> None:
         base_url = db_url.replace(db_name, 'defaultdb')
         logger.info(f"Connecting to defaultdb to create {db_name} if needed")
         
-        conn = await asyncpg.connect(base_url)
+        conn_kwargs = _get_connection_kwargs(base_url)
+        conn = await asyncpg.connect(base_url, **conn_kwargs)
+        
         try:
             # Check if database exists
             exists = await conn.fetchval(
@@ -50,7 +96,7 @@ async def create_database_if_not_exists(db_url: str) -> None:
             
             if not exists:
                 # Create database
-                await conn.execute(f'CREATE DATABASE "{db_name}"')
+                await conn.execute(f'CREATE DATABASE IF NOT EXISTS "{db_name}"')
                 logger.info(f"Created database {db_name}")
             
         finally:
@@ -60,11 +106,20 @@ async def create_database_if_not_exists(db_url: str) -> None:
         logger.error(f"Error creating database: {e}")
         raise
 
+@backoff.on_exception(
+    backoff.expo,
+    (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.CannotConnectNowError),
+    max_tries=5
+)
 async def init_db(db_url: Optional[str] = None) -> None:
     """Initialize the database connection pool and schema.
     
     Args:
         db_url: Optional database URL. If not provided, will use settings.
+        
+    Raises:
+        ValueError: If database URL is not provided
+        Exception: If initialization fails after retries
     """
     global _pool, _schema_manager
     
@@ -80,16 +135,21 @@ async def init_db(db_url: Optional[str] = None) -> None:
         # Create database if needed
         await create_database_if_not_exists(url)
         
-        # Create connection pool with more conservative settings
+        # Get connection kwargs
+        conn_kwargs = _get_connection_kwargs(url)
+        
+        # Create connection pool with optimized settings for CockroachDB
         _pool = await asyncpg.create_pool(
             url,
-            min_size=2,
-            max_size=10,
-            max_queries=50000,
+            min_size=2,          # Minimum idle connections
+            max_size=20,         # Maximum connections
+            max_queries=10000,   # Reset connection after this many queries
             max_inactive_connection_lifetime=300.0,  # 5 minutes
+            command_timeout=60.0,  # 1 minute command timeout
             init=lambda conn: conn.execute(
                 'SET multiple_active_portals_enabled = true'
-            )
+            ),
+            **conn_kwargs
         )
         
         # Initialize schema manager
@@ -111,6 +171,8 @@ async def get_pool() -> asyncpg.Pool:
     """
     if not _pool:
         await init_db()
+    if not _pool:
+        raise RuntimeError("Failed to initialize database pool")
     return _pool
 
 async def close() -> None:

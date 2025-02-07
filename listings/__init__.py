@@ -14,8 +14,8 @@ from decimal import Decimal
 
 from database import get_pool
 from rpc import getnewaddress, getassetdata, RPCError
-
 logger = logging.getLogger(__name__)
+
 
 # User-mutable fields for listings
 MUTABLE_FIELDS = {
@@ -852,6 +852,20 @@ class ListingManager:
             logger.error(f"Error updating listing prices: {e}")
             raise ListingError(f"Failed to update listing prices: {e}")
 
+
+""" Export the routes """
+from .get_listings import get_listings
+from .get_listing import get_listing
+from .get_listing_by_deposit_address import get_listing_by_deposit_address
+from .get_listings_by_seller_address import get_listings_by_seller_address
+from .get_listings_by_asset_name import get_listings_by_asset_name
+from .get_listings_by_tag import get_listings_by_tag
+from .get_address_transactions import get_address_transactions
+from .get_listing_transactions import get_listing_transactions
+from .get_seller_transactions import get_seller_transactions
+from .create_test_listing import create_test_listing
+from .search import search
+
 # Export public interface
 __all__ = [
     'ListingManager',
@@ -860,5 +874,16 @@ __all__ = [
     'InvalidPriceError',
     'MUTABLE_FIELDS',
     'SYSTEM_FIELDS',
-    'BALANCE_FIELDS'
+    'BALANCE_FIELDS',
+    'get_listings',
+    'search',
+    'get_listing',
+    'get_listing_by_deposit_address',
+    'get_listings_by_seller_address',
+    'get_listings_by_asset_name',
+    'get_listings_by_tag',
+    'get_address_transactions',
+    'get_listing_transactions',
+    'get_seller_transactions',
+    'create_test_listing'
 ] 

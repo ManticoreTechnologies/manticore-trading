@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Manticore Trading API Documentation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        .endpoint {
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 4px 4px 0;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .get { background: #61affe; color: white; }
+        .post { background: #49cc90; color: white; }
+        .delete { background: #f93e3e; color: white; }
+        .path {
+            font-family: monospace;
+            font-size: 1.1em;
+            color: #3498db;
+        }
+        .params {
+            margin-left: 20px;
+        }
+        .param-name {
+            font-family: monospace;
+            color: #e83e8c;
+        }
+        .param-type {
+            color: #6c757d;
+            font-style: italic;
+        }
+        .response {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        code {
+            background: #272822;
+            color: #f8f8f2;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        pre {
+            background: #272822;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Manticore Trading API Documentation</h1>
+    
+    <h2>Listings Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings</span>
+        <p>Get all listings with pagination metadata</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/search</span>
+        <p>Search listings with various filters and pagination</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">search_term</span> <span class="param-type">(string, optional)</span>: Text to search in name/description</li>
+                <li><span class="param-name">seller_address</span> <span class="param-type">(string, optional)</span>: Filter by seller address</li>
+                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
+                <li><span class="param-name">min_price_evr</span> <span class="param-type">(decimal, optional)</span>: Minimum price in EVR</li>
+                <li><span class="param-name">max_price_evr</span> <span class="param-type">(decimal, optional)</span>: Maximum price in EVR</li>
+                <li><span class="param-name">status</span> <span class="param-type">(string, optional)</span>: Filter by listing status</li>
+                <li><span class="param-name">tags</span> <span class="param-type">(array of strings, optional)</span>: Filter by tags</li>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/by-id/{listing_id}</span>
+        <p>Get a specific listing by its ID</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/by-deposit-address/{deposit_address}</span>
+        <p>Get a listing by its deposit address</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">deposit_address</span> <span class="param-type">(string)</span>: The listing's deposit address</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/by-seller-address/{seller_address}</span>
+        <p>Get all listings for a specific seller</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">seller_address</span> <span class="param-type">(string)</span>: The seller's address</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/by-asset-name/{asset_name}</span>
+        <p>Get all listings for a specific asset</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">asset_name</span> <span class="param-type">(string)</span>: The asset name</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/by-tag/{tag}</span>
+        <p>Get all listings with a specific tag</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">tag</span> <span class="param-type">(string)</span>: The tag to filter by</li>
+            </ul>
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2>Transaction Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/transactions/{address}</span>
+        <p>Get transaction history for a specific address</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">address</span> <span class="param-type">(string)</span>: The address to get transactions for</li>
+            </ul>
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/{listing_id}/transactions</span>
+        <p>Get all transactions for a specific listing (both deposit and listing address)</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/seller/{seller_address}/transactions</span>
+        <p>Get all transactions for a seller's listings</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">seller_address</span> <span class="param-type">(string)</span>: The seller's address</li>
+            </ul>
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
+                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive)</li>
+                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
+                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
+                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2>Listing Management Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/listings</span>
+        <p>Create a new listing</p>
+        <div class="params">
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "seller_address": "string",
+    "name": "string",
+    "description": "string (optional)",
+    "image_ipfs_hash": "string (optional)",
+    "prices": [
+        {
+            "asset_name": "string",
+            "price_evr": "decimal (optional)",
+            "price_asset_name": "string (optional)",
+            "price_asset_amount": "decimal (optional)",
+            "ipfs_hash": "string (optional)"
+        }
+    ],
+    "tags": ["string"] (optional)
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/listings/{listing_id}</span>
+        <p>Update an existing listing</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "name": "string (optional)",
+    "description": "string (optional)",
+    "image_ipfs_hash": "string (optional)",
+    "tags": ["string"] (optional)
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method delete">DELETE</span>
+        <span class="path">/listings/{listing_id}</span>
+        <p>Delete a listing</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2>Response Formats</h2>
+
+    <h3>Listing Object</h3>
+    <div class="response">
+        <pre>
+{
+    "id": "string (UUID)",
+    "seller_address": "string",
+    "listing_address": "string",
+    "deposit_address": "string",
+    "name": "string",
+    "description": "string",
+    "image_ipfs_hash": "string",
+    "status": "string",
+    "tags": ["string"],
+    "created_at": "string (ISO datetime)",
+    "updated_at": "string (ISO datetime)",
+    "prices": [
+        {
+            "asset_name": "string",
+            "price_evr": "string (decimal)",
+            "price_asset_name": "string",
+            "price_asset_amount": "string (decimal)",
+            "ipfs_hash": "string",
+            "units": "integer",
+            "created_at": "string (ISO datetime)",
+            "updated_at": "string (ISO datetime)"
+        }
+    ],
+    "balances": [
+        {
+            "asset_name": "string",
+            "confirmed_balance": "string (decimal)",
+            "pending_balance": "string (decimal)",
+            "units": "integer",
+            "last_confirmed_tx_hash": "string",
+            "last_confirmed_tx_time": "string (ISO datetime)",
+            "created_at": "string (ISO datetime)",
+            "updated_at": "string (ISO datetime)"
+        }
+    ]
+}</pre>
+    </div>
+
+    <h3>Transaction Object</h3>
+    <div class="response">
+        <pre>
+{
+    "tx_hash": "string",
+    "address": "string",
+    "entry_type": "string (receive)",
+    "asset_name": "string",
+    "amount": "string (decimal)",
+    "fee": "string (decimal)",
+    "confirmations": "integer",
+    "time": "string (ISO datetime)",
+    "asset_type": "string",
+    "asset_message": "string",
+    "vout": "integer",
+    "trusted": "boolean",
+    "bip125_replaceable": "boolean",
+    "abandoned": "boolean",
+    "created_at": "string (ISO datetime)",
+    "updated_at": "string (ISO datetime)",
+    "listing_id": "string (UUID, only in seller transactions)",
+    "listing_name": "string (only in seller transactions)"
+}</pre>
+    </div>
+
+    <h3>Paginated Response</h3>
+    <div class="response">
+        <pre>
+{
+    "items": [...],
+    "total_count": "integer",
+    "metadata": {
+        "limit": "integer",
+        "offset": "integer",
+        "page": "integer",
+        "total_pages": "integer"
+    }
+}</pre>
+    </div>
+
+</body>
+</html>
+
