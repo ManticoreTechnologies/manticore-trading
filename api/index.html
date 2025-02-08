@@ -498,8 +498,86 @@
     "name": "string (optional)",
     "description": "string (optional)",
     "image_ipfs_hash": "string (optional)",
-    "tags": ["string"] (optional)
+    "tags": ["string"] (optional),
+    "prices": [
+        {
+            "asset_name": "string",
+            "price_evr": "decimal (optional)",
+            "price_asset_name": "string (optional)",
+            "price_asset_amount": "decimal (optional)",
+            "ipfs_hash": "string (optional)",
+            "units": "integer (optional, default: 8)"
+        }
+    ] (optional)
 }</pre>
+            <h4>Notes:</h4>
+            <ul>
+                <li>All fields are optional - only specified fields will be updated</li>
+                <li>For prices, you can specify either <code>price_evr</code> OR (<code>price_asset_name</code> AND <code>price_asset_amount</code>)</li>
+                <li>Tags will be stored as a comma-separated string internally</li>
+                <li>The units field specifies decimal places for the asset (defaults to 8)</li>
+                <li>Existing prices not included in the update will remain unchanged</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "id": "string (UUID)",
+    "seller_address": "string",
+    "listing_address": "string",
+    "deposit_address": "string",
+    "name": "string",
+    "description": "string",
+    "image_ipfs_hash": "string",
+    "status": "string",
+    "created_at": "string (ISO datetime)",
+    "updated_at": "string (ISO datetime)",
+    "prices": [
+        {
+            "asset_name": "string",
+            "price_evr": "string (decimal)",
+            "price_asset_name": "string",
+            "price_asset_amount": "string (decimal)",
+            "ipfs_hash": "string",
+            "units": "integer",
+            "created_at": "string (ISO datetime)",
+            "updated_at": "string (ISO datetime)"
+        }
+    ],
+    "balances": [
+        {
+            "asset_name": "string",
+            "confirmed_balance": "string (decimal)",
+            "pending_balance": "string (decimal)",
+            "units": "integer",
+            "last_confirmed_tx_hash": "string",
+            "last_confirmed_tx_time": "string (ISO datetime)",
+            "created_at": "string (ISO datetime)",
+            "updated_at": "string (ISO datetime)"
+        }
+    ]
+}</pre>
+            <h4>Error Responses:</h4>
+            <ul>
+                <li><code>404 Not Found</code>: If listing doesn't exist</li>
+                <li><code>400 Bad Request</code>: If price specification is invalid</li>
+                <li><code>400 Bad Request</code>: If asset validation fails</li>
+                <li><code>500 Internal Server Error</code>: For unexpected errors</li>
+            </ul>
+            <h4>Example:</h4>
+            <pre>
+# Update listing name and add a price for CREDITS
+curl -X POST "http://localhost:8000/listings/by-id/YOUR_LISTING_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Name",
+    "prices": [
+      {
+        "asset_name": "CREDITS",
+        "price_evr": 150.0,
+        "units": 8
+      }
+    ]
+  }'</pre>
         </div>
     </div>
 
