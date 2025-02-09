@@ -1,6 +1,6 @@
 """Listings API endpoints."""
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Security
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from pydantic import BaseModel
@@ -14,11 +14,13 @@ from listings import (
     get_listing_transactions, get_seller_transactions,
     withdraw
 )
+from auth import get_current_user, auth_scheme
 
-# Create router
+# Create router with security
 router = APIRouter(
     prefix="/listings",
-    tags=["Listings"]
+    tags=["Listings"],
+    dependencies=[Security(get_current_user)]  # Require authentication for all endpoints
 )
 
 # Import management endpoints

@@ -1,6 +1,6 @@
 """Seller management endpoints for listing control and analytics."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends, Security
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from decimal import Decimal
 from database import get_pool
 from listings import ListingManager, ListingError
+from auth import get_current_user, AuthError, auth_scheme
 
 # Create router without prefix since it will be included in the main listings router
 router = APIRouter()
@@ -23,21 +24,36 @@ class CreateListingRequest(BaseModel):
     seller_address: str = Field(..., description="The seller's address")
     name: str = Field(..., description="Name of the listing")
     description: str = Field(..., description="Description of the listing")
-    image_ipfs_hash: str = Field(..., description="IPFS hash of the listing image")
+    image_ipfs_hash: Optional[str] = Field(None, description="Optional IPFS hash of the listing image")
     prices: List[Price] = Field(..., description="List of prices in different assets")
     tags: List[str] = Field(default=[], description="List of tags for the listing")
+    payout_address: Optional[str] = Field(None, description="Optional payout address, defaults to seller_address if not provided")
 
 @router.post("/")
-async def create_listing(listing: CreateListingRequest):
+async def create_listing(
+    listing: CreateListingRequest,
+    authenticated_address: str = Security(get_current_user)
+):
     """Create a new listing.
     
     Args:
         listing: The listing details
+        authenticated_address: The authenticated address from the JWT token
         
     Returns:
         Dict containing the created listing details
+        
+    Raises:
+        HTTPException: If authentication fails or seller address doesn't match authenticated address
     """
     try:
+        # Verify seller address matches authenticated address
+        if listing.seller_address.lower() != authenticated_address.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Seller address must match authenticated address"
+            )
+            
         manager = ListingManager()
         result = await manager.create_listing(
             seller_address=listing.seller_address,
@@ -45,7 +61,8 @@ async def create_listing(listing: CreateListingRequest):
             description=listing.description,
             image_ipfs_hash=listing.image_ipfs_hash,
             prices=[price.dict() for price in listing.prices],
-            tags=listing.tags
+            tags=listing.tags,
+            payout_address=listing.payout_address
         )
         return result
     except ListingError as e:

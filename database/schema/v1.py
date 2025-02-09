@@ -6,6 +6,7 @@ This version includes tables for:
 - Transaction tracking
 - Analytics and metrics
 - Rate limiting and system monitoring
+- Authentication and sessions
 """
 
 schema = {
@@ -18,6 +19,7 @@ schema = {
                 {'name': 'seller_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'listing_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'deposit_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'payout_address', 'type': 'TEXT'},
                 {'name': 'name', 'type': 'TEXT', 'nullable': False},
                 {'name': 'tags', 'type': 'TEXT'},
                 {'name': 'description', 'type': 'TEXT'},
@@ -453,6 +455,68 @@ schema = {
             'indexes': [
                 {'name': 'idx_inventory_listing', 'columns': ['listing_id']},
                 {'name': 'idx_inventory_time', 'columns': ['created_at']}
+            ]
+        },
+        {
+            'name': 'auth_challenges',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'challenge', 'type': 'TEXT', 'nullable': False},
+                {'name': 'expires_at', 'type': 'TIMESTAMP', 'nullable': False},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'used', 'type': 'BOOLEAN', 'nullable': False, 'default': 'false'}
+            ],
+            'indexes': [
+                {'name': 'auth_challenges_address_idx', 'columns': ['address']},
+                {'name': 'auth_challenges_expires_at_idx', 'columns': ['expires_at']}
+            ]
+        },
+        {
+            'name': 'auth_sessions',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'token', 'type': 'TEXT', 'nullable': False},
+                {'name': 'expires_at', 'type': 'TIMESTAMP', 'nullable': False},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'last_used_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'user_agent', 'type': 'TEXT', 'nullable': True},
+                {'name': 'ip_address', 'type': 'TEXT', 'nullable': True},
+                {'name': 'revoked', 'type': 'BOOLEAN', 'nullable': False, 'default': 'false'}
+            ],
+            'indexes': [
+                {'name': 'auth_sessions_token_idx', 'columns': ['token']},
+                {'name': 'auth_sessions_address_idx', 'columns': ['address']},
+                {'name': 'auth_sessions_expires_at_idx', 'columns': ['expires_at']}
+            ]
+        },
+        {
+            'name': 'user_profiles',
+            'columns': [
+                {'name': 'address', 'type': 'TEXT', 'primary_key': True},
+                {'name': 'friendly_name', 'type': 'TEXT', 'nullable': False, 'default': "''"},
+                {'name': 'bio', 'type': 'TEXT', 'nullable': False, 'default': "''"},
+                {'name': 'profile_ipfs', 'type': 'TEXT', 'nullable': False, 'default': "''"},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'active'"},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_profiles_status', 'columns': ['status']}
+            ]
+        },
+        {
+            'name': 'user_favorite_assets',
+            'columns': [
+                {'name': 'address', 'type': 'TEXT'},
+                {'name': 'asset_name', 'type': 'TEXT'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_favorites_address', 'columns': ['address']},
+                {'name': 'idx_favorites_asset', 'columns': ['asset_name']},
+                {'name': 'idx_favorites_unique', 'columns': ['address', 'asset_name'], 'unique': True}
             ]
         }
     ],

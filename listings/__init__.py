@@ -90,7 +90,8 @@ class ListingManager:
         description: Optional[str] = None,
         image_ipfs_hash: Optional[str] = None,
         prices: Optional[List[Dict[str, Any]]] = None,
-        tags: Optional[List[str]] = None
+        tags: Optional[List[str]] = None,
+        payout_address: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a new listing.
         
@@ -106,6 +107,7 @@ class ListingManager:
                    - price_asset_amount: Optional asset amount for pricing
                    - ipfs_hash: Optional IPFS hash for price-specific content
             tags: Optional list of tags for the listing
+            payout_address: Optional payout address, defaults to seller_address if not provided
         
         Returns:
             Dict containing the created listing details
@@ -119,6 +121,9 @@ class ListingManager:
         try:
             # Convert tags list to comma-separated string
             tags_str = ','.join(tags) if tags else None
+            
+            # Use seller_address as payout_address if not provided
+            payout_address = payout_address or seller_address
             
             # Validate all asset names first and get their units
             if prices:
@@ -182,12 +187,12 @@ class ListingManager:
                 listing_id = await conn.fetchval(
                     '''
                     INSERT INTO listings (
-                        seller_address, listing_address, deposit_address, 
+                        seller_address, listing_address, deposit_address, payout_address,
                         name, description, image_ipfs_hash, tags
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
                     ''',
-                    seller_address, listing_address, deposit_address,
+                    seller_address, listing_address, deposit_address, payout_address,
                     name, description, image_ipfs_hash, tags_str
                 )
             

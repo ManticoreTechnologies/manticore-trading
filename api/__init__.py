@@ -8,6 +8,7 @@ This module provides HTTP endpoints for:
 - Market analytics and trends
 - System health monitoring
 - Notifications and alerts
+- Authentication and session management
 """
 
 import logging
@@ -122,6 +123,8 @@ from .websockets import router as websocket_router
 from .market import router as market_router
 from .system import router as system_router
 from .notifications import router as notifications_router
+from .auth import router as auth_router
+from .profile import router as profile_router
 
 # Include all routers
 app.include_router(listings_router)
@@ -130,3 +133,5 @@ app.include_router(websocket_router)
 app.include_router(market_router)
 app.include_router(system_router)
 app.include_router(notifications_router)
+app.include_router(auth_router)
+app.include_router(profile_router)
