@@ -31,6 +31,7 @@
         .get { background: #61affe; color: white; }
         .post { background: #49cc90; color: white; }
         .delete { background: #f93e3e; color: white; }
+        .ws { background: #9069cd; color: white; }
         .path {
             font-family: monospace;
             font-size: 1.1em;
@@ -96,22 +97,20 @@
         <h3>Quick Navigation</h3>
         <ul>
             <li><a href="#listings">Listings Endpoints</a></li>
-            <li><a href="#transactions">Transaction Endpoints</a></li>
             <li><a href="#orders">Order Endpoints</a></li>
-            <li><a href="#cart">Cart Order Endpoints</a></li>
-            <li><a href="#management">Listing Management Endpoints</a></li>
-            <li><a href="#operations">Listing Operations</a></li>
-            <li><a href="#testing">Testing Endpoints</a></li>
-            <li><a href="#formats">Response Formats</a></li>
+            <li><a href="#market">Market Data Endpoints</a></li>
+            <li><a href="#system">System Endpoints</a></li>
+            <li><a href="#websockets">WebSocket Endpoints</a></li>
+            <li><a href="#notifications">Notification Endpoints</a></li>
         </ul>
     </div>
-    
+
     <h2 id="listings">Listings Endpoints</h2>
 
     <div class="endpoint">
         <span class="method get">GET</span>
-        <span class="path">/listings</span>
-        <p>Get all listings with pagination metadata</p>
+        <span class="path">/listings/</span>
+        <p>Get all listings with pagination</p>
         <div class="params">
             <h4>Query Parameters:</h4>
             <ul>
@@ -124,7 +123,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/search</span>
-        <p>Search listings with various filters and pagination</p>
+        <p>Search listings with various filters</p>
         <div class="params">
             <h4>Query Parameters:</h4>
             <ul>
@@ -144,7 +143,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/by-id/{listing_id}</span>
-        <p>Get a specific listing by its ID</p>
+        <p>Get a specific listing by ID</p>
         <div class="params">
             <h4>Path Parameters:</h4>
             <ul>
@@ -156,7 +155,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/by-deposit-address/{deposit_address}</span>
-        <p>Get a listing by its deposit address</p>
+        <p>Get a listing by deposit address</p>
         <div class="params">
             <h4>Path Parameters:</h4>
             <ul>
@@ -168,7 +167,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/by-seller-address/{seller_address}</span>
-        <p>Get all listings for a specific seller</p>
+        <p>Get listings by seller address</p>
         <div class="params">
             <h4>Path Parameters:</h4>
             <ul>
@@ -180,7 +179,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/by-asset-name/{asset_name}</span>
-        <p>Get all listings for a specific asset</p>
+        <p>Get listings by asset name</p>
         <div class="params">
             <h4>Path Parameters:</h4>
             <ul>
@@ -192,7 +191,7 @@
     <div class="endpoint">
         <span class="method get">GET</span>
         <span class="path">/listings/by-tag/{tag}</span>
-        <p>Get all listings with a specific tag</p>
+        <p>Get listings by tag</p>
         <div class="params">
             <h4>Path Parameters:</h4>
             <ul>
@@ -206,260 +205,9 @@
         </div>
     </div>
 
-    <h2 id="transactions">Transaction Endpoints</h2>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/listings/transactions/{address}</span>
-        <p>Get transaction history for a specific address</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">address</span> <span class="param-type">(string)</span>: The address to get transactions for</li>
-            </ul>
-            <h4>Query Parameters:</h4>
-            <ul>
-                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
-                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
-                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
-                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
-            </ul>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/listings/{listing_id}/transactions</span>
-        <p>Get all transactions for a specific listing (both deposit and listing address)</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
-            </ul>
-            <h4>Query Parameters:</h4>
-            <ul>
-                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
-                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
-                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
-                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
-            </ul>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/listings/seller/{seller_address}/transactions</span>
-        <p>Get all transactions for a seller's listings</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">seller_address</span> <span class="param-type">(string)</span>: The seller's address</li>
-            </ul>
-            <h4>Query Parameters:</h4>
-            <ul>
-                <li><span class="param-name">asset_name</span> <span class="param-type">(string, optional)</span>: Filter by asset name</li>
-                <li><span class="param-name">entry_type</span> <span class="param-type">(string, optional)</span>: Filter by entry type (receive/withdraw)</li>
-                <li><span class="param-name">min_confirmations</span> <span class="param-type">(integer, optional)</span>: Minimum number of confirmations</li>
-                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
-                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
-            </ul>
-        </div>
-    </div>
-
-    <h2 id="orders">Order Endpoints</h2>
-
     <div class="endpoint">
         <span class="method post">POST</span>
-        <span class="path">/listings/{listing_id}/orders</span>
-        <p>Create a new order for a listing</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
-            </ul>
-            <h4>Request Body:</h4>
-            <pre>
-{
-    "buyer_address": "string",
-    "items": [
-        {
-            "asset_name": "string",
-            "amount": "decimal"
-        }
-    ]
-}</pre>
-            <h4>Response:</h4>
-            <pre>
-{
-    "id": "string (UUID)",
-    "listing_id": "string (UUID)",
-    "buyer_address": "string",
-    "payment_address": "string",
-    "status": "string",
-    "created_at": "string (ISO datetime)",
-    "updated_at": "string (ISO datetime)",
-    "items": [
-        {
-            "asset_name": "string",
-            "amount": "decimal",
-            "price_evr": "decimal",
-            "fee_evr": "decimal"
-        }
-    ],
-    "balances": [
-        {
-            "asset_name": "string",
-            "confirmed_balance": "decimal",
-            "pending_balance": "decimal"
-        }
-    ],
-    "total_price_evr": "decimal",
-    "total_fee_evr": "decimal",
-    "total_payment_evr": "decimal"
-}</pre>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/orders/{order_id}</span>
-        <p>Get order details by ID</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
-            </ul>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/orders/{order_id}/balances</span>
-        <p>Get order payment balances</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
-            </ul>
-            <h4>Response:</h4>
-            <pre>
-{
-    "asset_name": {
-        "confirmed_balance": "decimal",
-        "pending_balance": "decimal"
-    }
-}</pre>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/orders</span>
-        <p>Search orders with various filters</p>
-        <div class="params">
-            <h4>Query Parameters:</h4>
-            <ul>
-                <li><span class="param-name">buyer_address</span> <span class="param-type">(string, optional)</span>: Filter by buyer address</li>
-                <li><span class="param-name">listing_id</span> <span class="param-type">(string, optional)</span>: Filter by listing ID</li>
-                <li><span class="param-name">status</span> <span class="param-type">(string, optional)</span>: Filter by order status</li>
-                <li><span class="param-name">per_page</span> <span class="param-type">(integer, default: 50)</span>: Number of results per page</li>
-                <li><span class="param-name">page</span> <span class="param-type">(integer, default: 1)</span>: Page number</li>
-            </ul>
-        </div>
-    </div>
-
-    <h2 id="cart">Cart Order Endpoints</h2>
-
-    <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/cart/orders</span>
-        <p>Create a new cart order for multiple listings</p>
-        <div class="params">
-            <h4>Request Body:</h4>
-            <pre>
-{
-    "buyer_address": "string",
-    "items": [
-        {
-            "listing_id": "string (UUID)",
-            "asset_name": "string",
-            "amount": "decimal"
-        }
-    ]
-}</pre>
-            <h4>Response:</h4>
-            <pre>
-{
-    "id": "string (UUID)",
-    "buyer_address": "string",
-    "payment_address": "string",
-    "status": "string",
-    "created_at": "string (ISO datetime)",
-    "updated_at": "string (ISO datetime)",
-    "items": [
-        {
-            "listing_id": "string (UUID)",
-            "listing_name": "string",
-            "seller_address": "string",
-            "asset_name": "string",
-            "amount": "decimal",
-            "price_evr": "decimal",
-            "fee_evr": "decimal"
-        }
-    ],
-    "balances": [
-        {
-            "asset_name": "string",
-            "confirmed_balance": "decimal",
-            "pending_balance": "decimal"
-        }
-    ],
-    "total_price_evr": "decimal",
-    "total_fee_evr": "decimal",
-    "total_payment_evr": "decimal"
-}</pre>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/cart/orders/{cart_order_id}</span>
-        <p>Get cart order details by ID</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">cart_order_id</span> <span class="param-type">(string)</span>: The cart order's UUID</li>
-            </ul>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/cart/orders/{cart_order_id}/balances</span>
-        <p>Get cart order payment balances</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">cart_order_id</span> <span class="param-type">(string)</span>: The cart order's UUID</li>
-            </ul>
-            <h4>Response:</h4>
-            <pre>
-{
-    "asset_name": {
-        "confirmed_balance": "decimal",
-        "pending_balance": "decimal"
-    }
-}</pre>
-        </div>
-    </div>
-
-    <h2 id="management">Listing Management Endpoints</h2>
-
-    <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/listings</span>
+        <span class="path">/listings/</span>
         <p>Create a new listing</p>
         <div class="params">
             <h4>Request Body:</h4>
@@ -475,125 +223,14 @@
             "price_evr": "decimal (optional)",
             "price_asset_name": "string (optional)",
             "price_asset_amount": "decimal (optional)",
-            "ipfs_hash": "string (optional)"
+            "ipfs_hash": "string (optional)",
+            "units": "integer (optional, default: 8)"
         }
     ],
     "tags": ["string"] (optional)
 }</pre>
         </div>
     </div>
-
-    <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/listings/by-id/{listing_id}</span>
-        <p>Update an existing listing</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
-            </ul>
-            <h4>Request Body:</h4>
-            <pre>
-{
-    "name": "string (optional)",
-    "description": "string (optional)",
-    "image_ipfs_hash": "string (optional)",
-    "tags": ["string"] (optional),
-    "prices": [
-        {
-            "asset_name": "string",
-            "price_evr": "decimal (optional)",
-            "price_asset_name": "string (optional)",
-            "price_asset_amount": "decimal (optional)",
-            "ipfs_hash": "string (optional)",
-            "units": "integer (optional, default: 8)"
-        }
-    ] (optional)
-}</pre>
-            <h4>Notes:</h4>
-            <ul>
-                <li>All fields are optional - only specified fields will be updated</li>
-                <li>For prices, you can specify either <code>price_evr</code> OR (<code>price_asset_name</code> AND <code>price_asset_amount</code>)</li>
-                <li>Tags will be stored as a comma-separated string internally</li>
-                <li>The units field specifies decimal places for the asset (defaults to 8)</li>
-                <li>Existing prices not included in the update will remain unchanged</li>
-            </ul>
-            <h4>Response:</h4>
-            <pre>
-{
-    "id": "string (UUID)",
-    "seller_address": "string",
-    "listing_address": "string",
-    "deposit_address": "string",
-    "name": "string",
-    "description": "string",
-    "image_ipfs_hash": "string",
-    "status": "string",
-    "created_at": "string (ISO datetime)",
-    "updated_at": "string (ISO datetime)",
-    "prices": [
-        {
-            "asset_name": "string",
-            "price_evr": "string (decimal)",
-            "price_asset_name": "string",
-            "price_asset_amount": "string (decimal)",
-            "ipfs_hash": "string",
-            "units": "integer",
-            "created_at": "string (ISO datetime)",
-            "updated_at": "string (ISO datetime)"
-        }
-    ],
-    "balances": [
-        {
-            "asset_name": "string",
-            "confirmed_balance": "string (decimal)",
-            "pending_balance": "string (decimal)",
-            "units": "integer",
-            "last_confirmed_tx_hash": "string",
-            "last_confirmed_tx_time": "string (ISO datetime)",
-            "created_at": "string (ISO datetime)",
-            "updated_at": "string (ISO datetime)"
-        }
-    ]
-}</pre>
-            <h4>Error Responses:</h4>
-            <ul>
-                <li><code>404 Not Found</code>: If listing doesn't exist</li>
-                <li><code>400 Bad Request</code>: If price specification is invalid</li>
-                <li><code>400 Bad Request</code>: If asset validation fails</li>
-                <li><code>500 Internal Server Error</code>: For unexpected errors</li>
-            </ul>
-            <h4>Example:</h4>
-            <pre>
-# Update listing name and add a price for CREDITS
-curl -X POST "http://localhost:8000/listings/by-id/YOUR_LISTING_ID" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Updated Name",
-    "prices": [
-      {
-        "asset_name": "CREDITS",
-        "price_evr": 150.0,
-        "units": 8
-      }
-    ]
-  }'</pre>
-        </div>
-    </div>
-
-    <div class="endpoint">
-        <span class="method delete">DELETE</span>
-        <span class="path">/listings/by-id/{listing_id}</span>
-        <p>Delete a listing</p>
-        <div class="params">
-            <h4>Path Parameters:</h4>
-            <ul>
-                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
-            </ul>
-        </div>
-    </div>
-
-    <h2 id="operations">Listing Operations</h2>
 
     <div class="endpoint">
         <span class="method post">POST</span>
@@ -611,126 +248,327 @@ curl -X POST "http://localhost:8000/listings/by-id/YOUR_LISTING_ID" \
     "amount": "decimal",
     "to_address": "string"
 }</pre>
-            <h4>Response:</h4>
-            <pre>
-{
-    "tx_hash": "string",
-    "amount": "string (decimal)",
-    "asset_name": "string",
-    "from_address": "string",
-    "to_address": "string"
-}</pre>
         </div>
     </div>
-
-    <h2 id="testing">Testing Endpoints</h2>
 
     <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/test/create-listing</span>
-        <p>Create a test listing with sample data and real addresses</p>
+        <span class="method delete">DELETE</span>
+        <span class="path">/listings/by-id/{listing_id}</span>
+        <p>Delete a listing</p>
         <div class="params">
-            <p>This endpoint creates a test listing with:</p>
+            <h4>Path Parameters:</h4>
             <ul>
-                <li>New Evrmore addresses for seller and listing</li>
-                <li>Sample asset prices and balances</li>
-                <li>Test data for development purposes</li>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
             </ul>
-            <h4>Response:</h4>
-            <p>Returns the created listing object</p>
         </div>
     </div>
 
-    <h2 id="formats">Response Formats</h2>
+    <h2 id="orders">Order Endpoints</h2>
 
-    <h3>Listing Object</h3>
-    <div class="response">
-        <pre>
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/orders/create/{listing_id}</span>
+        <p>Create a new order for a listing</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">listing_id</span> <span class="param-type">(string)</span>: The listing's UUID</li>
+            </ul>
+            <h4>Request Body:</h4>
+            <pre>
 {
-    "id": "string (UUID)",
-    "seller_address": "string",
-    "listing_address": "string",
-    "deposit_address": "string",
-    "name": "string",
-    "description": "string",
-    "image_ipfs_hash": "string",
-    "status": "string",
-    "tags": ["string"],
-    "created_at": "string (ISO datetime)",
-    "updated_at": "string (ISO datetime)",
-    "prices": [
+    "buyer_address": "string",
+    "items": [
         {
             "asset_name": "string",
-            "price_evr": "string (decimal)",
-            "price_asset_name": "string",
-            "price_asset_amount": "string (decimal)",
-            "ipfs_hash": "string",
-            "units": "integer",
-            "created_at": "string (ISO datetime)",
-            "updated_at": "string (ISO datetime)"
-        }
-    ],
-    "balances": [
-        {
-            "asset_name": "string",
-            "confirmed_balance": "string (decimal)",
-            "pending_balance": "string (decimal)",
-            "units": "integer",
-            "last_confirmed_tx_hash": "string",
-            "last_confirmed_tx_time": "string (ISO datetime)",
-            "created_at": "string (ISO datetime)",
-            "updated_at": "string (ISO datetime)"
+            "amount": "decimal"
         }
     ]
 }</pre>
+        </div>
     </div>
 
-    <h3>Transaction Object</h3>
-    <div class="response">
-        <pre>
-{
-    "tx_hash": "string",
-    "address": "string",
-    "entry_type": "string (receive/withdraw)",
-    "asset_name": "string",
-    "amount": "string (decimal)",
-    "fee": "string (decimal)",
-    "confirmations": "integer",
-    "time": "string (ISO datetime)",
-    "asset_type": "string",
-    "asset_message": "string",
-    "vout": "integer",
-    "trusted": "boolean",
-    "bip125_replaceable": "boolean",
-    "abandoned": "boolean",
-    "created_at": "string (ISO datetime)",
-    "updated_at": "string (ISO datetime)",
-    "listing_id": "string (UUID, only in seller transactions)",
-    "listing_name": "string (only in seller transactions)"
-}</pre>
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders/{order_id}</span>
+        <p>Get order details</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+        </div>
     </div>
 
-    <h3>Paginated Response</h3>
-    <div class="response">
-        <pre>
-{
-    "items": [...],
-    "total_count": "integer",
-    "metadata": {
-        "limit": "integer",
-        "offset": "integer",
-        "page": "integer",
-        "total_pages": "integer"
-    }
-}</pre>
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders/{order_id}/balances</span>
+        <p>Get order payment balances</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+        </div>
     </div>
 
-    <h3>Error Response</h3>
-    <div class="response">
-        <pre>
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/orders/{order_id}/cancel</span>
+        <p>Cancel an unfulfilled order</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/orders/{order_id}/history</span>
+        <p>Get order history</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">order_id</span> <span class="param-type">(string)</span>: The order's UUID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/orders/cart</span>
+        <p>Create a cart order (multiple listings)</p>
+        <div class="params">
+            <h4>Request Body:</h4>
+            <pre>
 {
-    "detail": "string (error message)"
+    "buyer_address": "string",
+    "items": [
+        {
+            "listing_id": "string",
+            "asset_name": "string",
+            "amount": "decimal"
+        }
+    ]
 }</pre>
+        </div>
+    </div>
+
+    <h2 id="market">Market Data Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/market/stats</span>
+        <p>Get market-wide statistics</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">start_date</span> <span class="param-type">(datetime, optional)</span>: Start date for stats period</li>
+                <li><span class="param-name">end_date</span> <span class="param-type">(datetime, optional)</span>: End date for stats period</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/market/trending</span>
+        <p>Get trending items</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">category</span> <span class="param-type">(string, optional)</span>: Filter by category</li>
+                <li><span class="param-name">time_frame</span> <span class="param-type">(string, default: "24h")</span>: Time frame for trend calculation (24h/7d/30d)</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2 id="system">System Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/system/health</span>
+        <p>Get system health status</p>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/system/limits</span>
+        <p>Get current rate limits and usage</p>
+    </div>
+
+    <h2 id="websockets">WebSocket Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method ws">WS</span>
+        <span class="path">/ws/ping</span>
+        <p>Simple WebSocket endpoint for testing connectivity</p>
+        <div class="params">
+            <h4>Messages:</h4>
+            <ul>
+                <li>Send: <code>"ping"</code></li>
+                <li>Receive: <code>"pong"</code></li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method ws">WS</span>
+        <span class="path">/ws/listings</span>
+        <p>WebSocket endpoint for real-time listings updates</p>
+        <div class="params">
+            <h4>Messages:</h4>
+            <ul>
+                <li>Receive Updates: 
+                    <pre>
+{
+    "type": "update",
+    "channel": "listings",
+    "data": {
+        // Listing data
+    },
+    "timestamp": "ISO-8601 timestamp"
+}</pre>
+                </li>
+                <li>Receive Heartbeat: 
+                    <pre>
+{
+    "type": "ping"
+}</pre>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method ws">WS</span>
+        <span class="path">/ws/orders</span>
+        <p>WebSocket endpoint for real-time order updates</p>
+        <div class="params">
+            <h4>Messages:</h4>
+            <ul>
+                <li>Receive Updates: 
+                    <pre>
+{
+    "type": "update",
+    "channel": "orders",
+    "data": {
+        // Order data
+    },
+    "timestamp": "ISO-8601 timestamp"
+}</pre>
+                </li>
+                <li>Receive Heartbeat: 
+                    <pre>
+{
+    "type": "ping"
+}</pre>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method ws">WS</span>
+        <span class="path">/ws/market</span>
+        <p>WebSocket endpoint for real-time market data updates</p>
+        <div class="params">
+            <h4>Messages:</h4>
+            <ul>
+                <li>Receive Updates: 
+                    <pre>
+{
+    "type": "update",
+    "channel": "market",
+    "data": {
+        // Market data
+    },
+    "timestamp": "ISO-8601 timestamp"
+}</pre>
+                </li>
+                <li>Receive Heartbeat: 
+                    <pre>
+{
+    "type": "ping"
+}</pre>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <h2 id="notifications">Notification Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/notifications/settings</span>
+        <p>Update notification settings</p>
+        <div class="params">
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "email_enabled": "boolean",
+    "email_address": "string (optional)",
+    "order_updates": "boolean",
+    "listing_updates": "boolean",
+    "price_alerts": "boolean"
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/notifications/settings/{user_address}</span>
+        <p>Get notification settings</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">user_address</span> <span class="param-type">(string)</span>: The user's address</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/notifications/unread/{user_address}</span>
+        <p>Get unread notifications</p>
+        <div class="params">
+            <h4>Path Parameters:</h4>
+            <ul>
+                <li><span class="param-name">user_address</span> <span class="param-type">(string)</span>: The user's address</li>
+            </ul>
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">limit</span> <span class="param-type">(integer, default: 50)</span>: Number of notifications to return</li>
+                <li><span class="param-name">offset</span> <span class="param-type">(integer, default: 0)</span>: Number of notifications to skip</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/notifications/mark-read</span>
+        <p>Mark notifications as read</p>
+        <div class="params">
+            <h4>Request Body:</h4>
+            <pre>
+{
+    "user_address": "string",
+    "notification_ids": ["string (UUID)"]
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method ws">WS</span>
+        <span class="path">/notifications/stream</span>
+        <p>Real-time notification stream</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><span class="param-name">user_address</span> <span class="param-type">(string)</span>: The user's address</li>
+            </ul>
+        </div>
     </div>
 
 </body>

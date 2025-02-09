@@ -2,9 +2,9 @@
 
 This module provides functionality for:
 - Creating and managing listings
-- Tracking listing balances
-- Managing deposit addresses
-- Price management
+- Setting prices and tracking balances
+- Searching and filtering listings
+- Managing listing lifecycle
 """
 
 import logging
@@ -14,6 +14,18 @@ from decimal import Decimal
 
 from database import get_pool
 from rpc import getnewaddress, getassetdata, RPCError
+from .get_listings import get_listings
+from .get_listing import get_listing
+from .get_listing_by_deposit_address import get_listing_by_deposit_address
+from .get_listings_by_seller_address import get_listings_by_seller_address
+from .get_listings_by_asset_name import get_listings_by_asset_name
+from .get_listings_by_tag import get_listings_by_tag
+from .get_address_transactions import get_address_transactions
+from .get_listing_transactions import get_listing_transactions
+from .get_seller_transactions import get_seller_transactions
+from .create_test_listing import create_test_listing
+from .withdraw import withdraw, WithdrawError
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +117,9 @@ class ListingManager:
         await self.ensure_pool()
         
         try:
+            # Convert tags list to comma-separated string
+            tags_str = ','.join(tags) if tags else None
+            
             # Validate all asset names first and get their units
             if prices:
                 for price in prices:
@@ -173,7 +188,7 @@ class ListingManager:
                     RETURNING id
                     ''',
                     seller_address, listing_address, deposit_address,
-                    name, description, image_ipfs_hash, tags
+                    name, description, image_ipfs_hash, tags_str
                 )
             
             # Add prices if specified
@@ -878,41 +893,22 @@ class ListingManager:
             raise ListingError(f"Failed to update listing prices: {e}")
 
 
-""" Export the routes """
-from .get_listings import get_listings
-from .get_listing import get_listing
-from .get_listing_by_deposit_address import get_listing_by_deposit_address
-from .get_listings_by_seller_address import get_listings_by_seller_address
-from .get_listings_by_asset_name import get_listings_by_asset_name
-from .get_listings_by_tag import get_listings_by_tag
-from .get_address_transactions import get_address_transactions
-from .get_listing_transactions import get_listing_transactions
-from .get_seller_transactions import get_seller_transactions
-from .create_test_listing import create_test_listing
-from .withdraw import withdraw, WithdrawError
-from .search import search
-
 # Export public interface
 __all__ = [
     'ListingManager',
     'ListingError',
     'ListingNotFoundError',
     'InvalidPriceError',
-    'MUTABLE_FIELDS',
-    'SYSTEM_FIELDS',
-    'BALANCE_FIELDS',
-    'get_listings',
-    'search',
     'get_listing',
     'get_listing_by_deposit_address',
+    'get_listings',
     'get_listings_by_seller_address',
     'get_listings_by_asset_name',
     'get_listings_by_tag',
-    'get_address_transactions',
     'get_listing_transactions',
+    'get_address_transactions',
     'get_seller_transactions',
     'create_test_listing',
     'withdraw',
-    'WithdrawError',
-    'update_listing'
+    'WithdrawError'
 ] 

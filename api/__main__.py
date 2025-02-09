@@ -33,19 +33,23 @@ async def startup():
     """Initialize database and monitor."""
     global monitor, payout_processor
     
-    logger.info("Initializing database...")
-    await init_db()
-    pool = await get_pool()
-    
-    # Create monitor
-    logger.info("Creating blockchain monitor...")
-    monitor = monitor_transactions(pool)
-    
-    # Create payout processor
-    logger.info("Creating payout processor...")
-    payout_processor = PayoutManager(pool)
-    
-    return monitor, payout_processor
+    try:
+        logger.info("Initializing database...")
+        await init_db()
+        pool = await get_pool()
+        
+        # Create monitor
+        logger.info("Creating blockchain monitor...")
+        monitor = monitor_transactions(pool)
+        
+        # Create payout processor
+        logger.info("Creating payout processor...")
+        payout_processor = PayoutManager(pool)
+        
+        return monitor, payout_processor
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        raise
 
 class UvicornServer:
     """Wrapper for running uvicorn with proper lifecycle management."""
@@ -109,7 +113,11 @@ async def main():
         signal.signal(signal.SIGTERM, handle_shutdown)
         
         # Initialize services
-        monitor, payout_processor = await startup()
+        try:
+            monitor, payout_processor = await startup()
+        except Exception as e:
+            logger.error(f"Failed to initialize services: {e}")
+            return
         
         # Create tasks for all services
         tasks = [

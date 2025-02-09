@@ -1,28 +1,43 @@
-""" /api/listings """
+"""Listings API endpoints."""
 
-from api import app
-import listings
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
-from fastapi import Query, HTTPException, status, Body
 from pydantic import BaseModel
-from listings.withdraw import WithdrawError
+from uuid import UUID
+
+from listings import (
+    ListingManager, ListingError, ListingNotFoundError, InvalidPriceError,
+    get_listings, get_listing, get_listing_by_deposit_address,
+    get_listings_by_seller_address, get_listings_by_asset_name,
+    get_listings_by_tag, get_address_transactions,
+    get_listing_transactions, get_seller_transactions,
+    withdraw
+)
+
+# Create router
+router = APIRouter(
+    prefix="/listings",
+    tags=["Listings"]
+)
+
+# Import management endpoints
+from .management import router as management_router
+
+# Include management router
+router.include_router(management_router)
 
 """ Getters """
-@app.get("/listings") # Get all listings with pagination metadata
-async def get_listings(
+@router.get("/")
+async def list_listings(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Get all listings with pagination metadata """
+    """Get all listings with pagination metadata."""
     try:
         offset = (page - 1) * per_page
-        return await listings.get_listings(
-            limit=per_page,
-            offset=offset
-        )
-    except LookupError:
+        return await get_listings(offset=offset, limit=per_page)
+    except ListingNotFoundError:
         # Return empty result set with pagination metadata
         return {
             "listings": [],
@@ -38,8 +53,8 @@ async def get_listings(
             detail=str(e)
         )
 
-@app.get("/listings/search") # Search listings with various filters and pagination metadata
-async def search_listings(
+@router.get("/search")
+async def search(
     search_term: Optional[str] = Query(None),
     seller_address: Optional[str] = Query(None),
     asset_name: Optional[str] = Query(None),
@@ -50,10 +65,11 @@ async def search_listings(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Search listings with various filters """
+    """Search listings with various filters."""
     try:
         offset = (page - 1) * per_page
-        return await listings.search(
+        manager = ListingManager()
+        return await manager.search_listings(
             search_term=search_term,
             seller_address=seller_address,
             asset_name=asset_name,
@@ -80,11 +96,12 @@ async def search_listings(
             detail=str(e)
         )
 
-@app.get("/listings/by-id/{listing_id}") # Get a listing by ID
-async def get_listing(listing_id: str):
+@router.get("/by-id/{listing_id}")
+async def get_listing_by_id(listing_id: str):
+    """Get a listing by ID."""
     try:
-        return await listings.get_listing(listing_id)
-    except listings.ListingNotFoundError:
+        return await get_listing(listing_id)
+    except LookupError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Listing {listing_id} not found"
@@ -95,14 +112,15 @@ async def get_listing(listing_id: str):
             detail=str(e)
         )
 
-@app.get("/listings/by-deposit-address/{deposit_address}") # Get a listing by deposit address
-async def get_listing_by_deposit_address(deposit_address: str):
+@router.get("/by-deposit-address/{deposit_address}")
+async def get_listing_by_deposit(deposit_address: str):
+    """Get a listing by deposit address."""
     try:
-        return await listings.get_listing_by_deposit_address(deposit_address)
-    except listings.ListingNotFoundError:
+        return await get_listing_by_deposit_address(deposit_address)
+    except LookupError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No listing found for deposit address {deposit_address}"
+            detail=f"Listing with deposit address {deposit_address} not found"
         )
     except Exception as e:
         raise HTTPException(
@@ -110,12 +128,12 @@ async def get_listing_by_deposit_address(deposit_address: str):
             detail=str(e)
         )
 
-@app.get("/listings/by-seller-address/{seller_address}") # Get listings by seller address
-async def get_listings_by_seller_address(seller_address: str):
+@router.get("/by-seller-address/{seller_address}")
+async def get_seller_listings(seller_address: str):
+    """Get listings by seller address."""
     try:
-        return await listings.get_listings_by_seller_address(seller_address)
+        return await get_listings_by_seller_address(seller_address)
     except LookupError:
-        # Return empty result for seller
         return {
             "listings": [],
             "total_count": 0,
@@ -127,12 +145,12 @@ async def get_listings_by_seller_address(seller_address: str):
             detail=str(e)
         )
 
-@app.get("/listings/by-asset-name/{asset_name}") # Get listings by asset name
-async def get_listings_by_asset_name(asset_name: str):
+@router.get("/by-asset-name/{asset_name}")
+async def get_asset_listings(asset_name: str):
+    """Get listings by asset name."""
     try:
-        return await listings.get_listings_by_asset_name(asset_name)
+        return await get_listings_by_asset_name(asset_name)
     except LookupError:
-        # Return empty result for asset
         return {
             "listings": [],
             "total_count": 0,
@@ -144,22 +162,21 @@ async def get_listings_by_asset_name(asset_name: str):
             detail=str(e)
         )
 
-@app.get("/listings/by-tag/{tag}") # Get listings by tag
-async def get_listings_by_tag(
+@router.get("/by-tag/{tag}")
+async def get_tag_listings(
     tag: str,
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Get listings by tag with pagination """
+    """Get listings by tag with pagination."""
     try:
         offset = (page - 1) * per_page
-        return await listings.get_listings_by_tag(
+        return await get_listings_by_tag(
             tag=tag,
             limit=per_page,
             offset=offset
         )
     except LookupError:
-        # Return empty result for tag with pagination metadata
         return {
             "listings": [],
             "total_count": 0,
@@ -175,8 +192,8 @@ async def get_listings_by_tag(
             detail=str(e)
         )
 
-@app.get("/listings/transactions/{address}") # Get transaction history for an address
-async def get_address_transactions(
+@router.get("/transactions/{address}")
+async def get_address_txns(
     address: str,
     asset_name: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
@@ -184,10 +201,10 @@ async def get_address_transactions(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Get transaction history for a specific address with optional filters """
+    """Get transaction history for an address."""
     try:
         offset = (page - 1) * per_page
-        return await listings.get_address_transactions(
+        return await get_address_transactions(
             address=address,
             asset_name=asset_name,
             entry_type=entry_type,
@@ -195,25 +212,14 @@ async def get_address_transactions(
             limit=per_page,
             offset=offset
         )
-    except LookupError:
-        # Return empty transaction history with pagination metadata
-        return {
-            "transactions": [],
-            "total_count": 0,
-            "total_pages": 0,
-            "current_page": page,
-            "limit": per_page,
-            "offset": offset,
-            "address": address
-        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
 
-@app.get("/listings/{listing_id}/transactions") # Get transactions for a specific listing
-async def get_listing_transactions(
+@router.get("/{listing_id}/transactions")
+async def get_listing_txns(
     listing_id: str,
     asset_name: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
@@ -221,10 +227,10 @@ async def get_listing_transactions(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Get all transactions for a specific listing (both deposit and listing address) """
+    """Get transactions for a specific listing."""
     try:
         offset = (page - 1) * per_page
-        return await listings.get_listing_transactions(
+        return await get_listing_transactions(
             listing_id=listing_id,
             asset_name=asset_name,
             entry_type=entry_type,
@@ -232,30 +238,19 @@ async def get_listing_transactions(
             limit=per_page,
             offset=offset
         )
-    except listings.ListingNotFoundError:
+    except LookupError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Listing {listing_id} not found"
         )
-    except LookupError:
-        # Return empty transaction list with pagination metadata
-        return {
-            "transactions": [],
-            "total_count": 0,
-            "total_pages": 0,
-            "current_page": page,
-            "limit": per_page,
-            "offset": offset,
-            "listing_id": listing_id
-        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
 
-@app.get("/listings/seller/{seller_address}/transactions") # Get all transactions for a seller's listings
-async def get_seller_transactions(
+@router.get("/seller/{seller_address}/transactions")
+async def get_seller_txns(
     seller_address: str,
     asset_name: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
@@ -263,10 +258,10 @@ async def get_seller_transactions(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """ Get all transactions for a seller's listings """
+    """Get all transactions for a seller's listings."""
     try:
         offset = (page - 1) * per_page
-        return await listings.get_seller_transactions(
+        return await get_seller_transactions(
             seller_address=seller_address,
             asset_name=asset_name,
             entry_type=entry_type,
@@ -274,28 +269,6 @@ async def get_seller_transactions(
             limit=per_page,
             offset=offset
         )
-    except LookupError:
-        # Return empty transaction list with pagination metadata
-        return {
-            "transactions": [],
-            "total_count": 0,
-            "total_pages": 0,
-            "current_page": page,
-            "limit": per_page,
-            "offset": offset,
-            "seller_address": seller_address
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-""" Setters """
-@app.post("/listings/")
-async def create_listing():
-    try:
-        return await listings.create_listing()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -311,6 +284,39 @@ class PriceSpecification(BaseModel):
     ipfs_hash: Optional[str] = None
     units: Optional[int] = 8  # Default to 8 decimal places
 
+class CreateListingRequest(BaseModel):
+    """Request model for creating a listing."""
+    seller_address: str
+    name: str
+    description: Optional[str] = None
+    image_ipfs_hash: Optional[str] = None
+    prices: List[PriceSpecification]
+    tags: Optional[List[str]] = None
+
+@router.post("/")
+async def create_listing(request: CreateListingRequest):
+    """Create a new listing."""
+    try:
+        manager = ListingManager()
+        return await manager.create_listing(
+            seller_address=request.seller_address,
+            name=request.name,
+            description=request.description,
+            image_ipfs_hash=request.image_ipfs_hash,
+            prices=[dict(price) for price in request.prices],
+            tags=request.tags
+        )
+    except InvalidPriceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
 class UpdateListingRequest(BaseModel):
     """Request model for updating a listing."""
     name: Optional[str] = None
@@ -319,54 +325,39 @@ class UpdateListingRequest(BaseModel):
     tags: Optional[List[str]] = None
     prices: Optional[List[PriceSpecification]] = None
 
-@app.post("/listings/by-id/{listing_id}")
-async def update_listing(listing_id: str, update_request: UpdateListingRequest):
-    """Update an existing listing.
-    
-    Args:
-        listing_id: The listing's UUID
-        update_request: The update details containing:
-            - name (optional): New listing name
-            - description (optional): New listing description
-            - image_ipfs_hash (optional): New IPFS hash for listing image
-            - tags (optional): New list of tags
-            - prices (optional): New price specifications
-    """
+@router.post("/by-id/{listing_id}")
+async def update_listing(listing_id: str, request: UpdateListingRequest):
+    """Update a listing's details."""
     try:
-        manager = listings.ListingManager()
+        manager = ListingManager()
         
         # First verify the listing exists
         try:
             await manager.get_listing(listing_id)
-        except listings.ListingNotFoundError:
+        except ListingNotFoundError:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Listing {listing_id} not found"
             )
-        
-        # Convert request model to dict, handling nested models
+            
+        # Build updates dict
         updates = {}
-        for field, value in update_request.dict(exclude_unset=True).items():
-            if value is not None:
-                if field == 'prices':
-                    # Convert price specifications to dicts
-                    updates[field] = [price.dict(exclude_unset=True) for price in update_request.prices]
-                elif field == 'tags':
-                    # Convert tags list to comma-separated string
-                    updates[field] = ','.join(value)
-                else:
-                    updates[field] = value
-        
-        # Perform the update
+        if request.name is not None:
+            updates['name'] = request.name
+        if request.description is not None:
+            updates['description'] = request.description
+        if request.image_ipfs_hash is not None:
+            updates['image_ipfs_hash'] = request.image_ipfs_hash
+        if request.tags is not None:
+            updates['tags'] = request.tags
+        if request.prices is not None:
+            updates['prices'] = [dict(price) for price in request.prices]
+            
+        # Update listing
         try:
             updated_listing = await manager.update_listing(listing_id, updates)
             return updated_listing
-        except listings.InvalidPriceError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
-        except listings.ListingError as e:
+        except ListingError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
@@ -377,14 +368,16 @@ async def update_listing(listing_id: str, update_request: UpdateListingRequest):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update listing: {str(e)}"
+            detail=str(e)
         )
 
-@app.delete("/listings/by-id/{listing_id}")
+@router.delete("/by-id/{listing_id}")
 async def delete_listing(listing_id: str):
+    """Delete a listing."""
     try:
-        return await listings.delete_listing(listing_id)
-    except listings.ListingNotFoundError:
+        manager = ListingManager()
+        return await manager.delete_listing(listing_id)
+    except ListingNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Listing {listing_id} not found"
@@ -395,11 +388,12 @@ async def delete_listing(listing_id: str):
             detail=str(e)
         )
 
-""" Test endpoints """
-@app.get("/test/create-listing")
+@router.get("/test/create-listing")
 async def create_test_listing():
+    """Create a test listing with sample data."""
     try:
-        return await listings.create_test_listing()
+        manager = ListingManager()
+        return await manager.create_test_listing()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -412,46 +406,34 @@ class WithdrawRequest(BaseModel):
     amount: Decimal
     to_address: str
 
-@app.post("/listings/{listing_id}/withdraw")
+@router.post("/{listing_id}/withdraw")
 async def withdraw_from_listing(
     listing_id: str,
     withdraw_request: WithdrawRequest
 ):
-    """Withdraw assets from a listing.
-    
-    Args:
-        listing_id: The listing UUID
-        withdraw_request: The withdrawal details containing:
-            - asset_name: Name of asset to withdraw
-            - amount: Amount to withdraw
-            - to_address: Address to send assets to
-    """
+    """Withdraw assets from a listing."""
     try:
-        result = await listings.withdraw(
+        return await withdraw(
             listing_id=listing_id,
             asset_name=withdraw_request.asset_name,
             amount=withdraw_request.amount,
             to_address=withdraw_request.to_address
         )
-        return result
-    except WithdrawError as e:
-        if "not found" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(e)
-            )
-        elif "insufficient balance" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
+    except ListingNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Listing {listing_id} not found"
+        )
+    except ListingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+
+# Export the router
+__all__ = ['router']

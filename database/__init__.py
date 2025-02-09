@@ -111,11 +111,12 @@ async def create_database_if_not_exists(db_url: str) -> None:
     (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.CannotConnectNowError),
     max_tries=5
 )
-async def init_db(db_url: Optional[str] = None) -> None:
+async def init_db(db_url: Optional[str] = None, force_recreate: bool = False) -> None:
     """Initialize the database connection pool and schema.
     
     Args:
         db_url: Optional database URL. If not provided, will use settings.
+        force_recreate: If True, drop and recreate all tables
         
     Raises:
         ValueError: If database URL is not provided
@@ -154,6 +155,50 @@ async def init_db(db_url: Optional[str] = None) -> None:
         
         # Initialize schema manager
         _schema_manager = SchemaManager(_pool)
+        
+        # Check if schema exists
+        async with _pool.acquire() as conn:
+            schema_exists = await conn.fetchval(
+                '''
+                SELECT EXISTS (
+                    SELECT 1 
+                    FROM pg_tables 
+                    WHERE schemaname = 'public' 
+                    AND tablename = 'schema_version'
+                )
+                '''
+            )
+            
+            if not schema_exists or force_recreate:
+                logger.info("Schema not found or force recreate requested. Creating schema...")
+                # Create schema_version table if it doesn't exist
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS schema_version (
+                        version INT NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMP NOT NULL DEFAULT now()
+                    )
+                ''')
+                
+                # Get list of tables to drop
+                tables = await conn.fetch(
+                    '''
+                    SELECT tablename 
+                    FROM pg_tables 
+                    WHERE schemaname = 'public' 
+                    AND tablename != 'schema_version'
+                    '''
+                )
+                
+                # Drop each table individually
+                for table in tables:
+                    await conn.execute(
+                        f'DROP TABLE IF EXISTS "{table["tablename"]}" CASCADE'
+                    )
+                
+                # Reset schema version
+                await conn.execute('DELETE FROM schema_version')
+                await conn.execute('INSERT INTO schema_version (version) VALUES (0)')
+                
         await _schema_manager.initialize()
         
     except Exception as e:

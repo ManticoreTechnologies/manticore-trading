@@ -4,6 +4,10 @@ This module provides HTTP endpoints for:
 - Creating and managing listings
 - Placing and managing orders
 - Checking balances and status
+- Real-time updates via WebSocket
+- Market analytics and trends
+- System health monitoring
+- Notifications and alerts
 """
 
 import logging
@@ -88,10 +92,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Root endpoint - register this BEFORE other routers
 @app.get("/")
-def root():
-    return HTMLResponse(content=open("api/index.html").read())
+async def root():
+    """Root endpoint returning API documentation."""
+    try:
+        with open("api/index.html", "r") as f:
+            content = f.read()
+        return HTMLResponse(
+            content=content,
+            status_code=200,
+            media_type="text/html"
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Documentation not found"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reading documentation: {str(e)}"
+        )
 
-# Import API modules
-from .listings import *
-from .orders import *
+# Import and include all routers
+from .listings import router as listings_router
+from .orders import router as orders_router
+from .websockets import router as websocket_router
+from .market import router as market_router
+from .system import router as system_router
+from .notifications import router as notifications_router
+
+# Include all routers
+app.include_router(listings_router)
+app.include_router(orders_router)
+app.include_router(websocket_router)
+app.include_router(market_router)
+app.include_router(system_router)
+app.include_router(notifications_router)

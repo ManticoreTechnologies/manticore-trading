@@ -823,18 +823,18 @@ class PayoutManager:
                 # Get paid regular orders without payouts
                 regular_orders = await conn.fetch(
                     '''
-                    SELECT o.*, op.failure_count, op.last_attempt_time
+                    SELECT o.*, op.attempts as failure_count, op.last_attempt as last_attempt_time
                     FROM orders o
                     LEFT JOIN order_payouts op ON o.id = op.order_id
                     WHERE o.status IN ('paid', 'sale_pending')
                     AND (
                         op.id IS NULL 
                         OR (
-                            op.success = false 
-                            AND op.failure_count < $1
+                            op.status = 'pending'
+                            AND op.attempts < $1
                             AND (
-                                op.last_attempt_time IS NULL 
-                                OR op.last_attempt_time < now() - interval '1 hour'
+                                op.last_attempt IS NULL 
+                                OR op.last_attempt < now() - interval '1 hour'
                             )
                         )
                     )
@@ -845,18 +845,18 @@ class PayoutManager:
                 # Get paid cart orders without payouts
                 cart_orders = await conn.fetch(
                     '''
-                    SELECT co.*, cop.failure_count, cop.last_attempt_time
+                    SELECT co.*, cop.attempts as failure_count, cop.last_attempt as last_attempt_time
                     FROM cart_orders co
-                    LEFT JOIN cart_order_payouts cop ON co.id = cop.cart_order_id
+                    LEFT JOIN order_payouts cop ON co.id = cop.cart_order_id
                     WHERE co.status IN ('paid', 'sale_pending')
                     AND (
                         cop.id IS NULL 
                         OR (
-                            cop.success = false 
-                            AND cop.failure_count < $1
+                            cop.status = 'pending'
+                            AND cop.attempts < $1
                             AND (
-                                cop.last_attempt_time IS NULL 
-                                OR cop.last_attempt_time < now() - interval '1 hour'
+                                cop.last_attempt IS NULL 
+                                OR cop.last_attempt < now() - interval '1 hour'
                             )
                         )
                     )
@@ -1086,19 +1086,25 @@ class PayoutManager:
                 '''
                 INSERT INTO order_payouts (
                     order_id, 
-                    success,
-                    total_fees_paid,
+                    status,
+                    amount,
+                    asset_name,
+                    to_address,
+                    tx_hash,
                     completed_at
-                ) VALUES ($1, true, $2, now())
+                ) VALUES ($1, 'completed', $2, 'EVR', $3, $4, now())
                 ON CONFLICT (order_id) DO UPDATE
                 SET 
-                    success = true,
-                    total_fees_paid = EXCLUDED.total_fees_paid,
+                    status = 'completed',
+                    amount = EXCLUDED.amount,
+                    tx_hash = EXCLUDED.tx_hash,
                     completed_at = EXCLUDED.completed_at,
                     updated_at = now()
                 ''',
                 order_id,
-                total_fees
+                total_fees,
+                DEFAULT_FEE_ADDRESS,
+                tx_hash
             )
             
             # Update order status
@@ -1134,14 +1140,14 @@ class PayoutManager:
                 '''
                 INSERT INTO order_payouts (
                     order_id,
-                    success,
-                    failure_count,
-                    last_attempt_time
-                ) VALUES ($1, false, 1, now())
+                    status,
+                    attempts,
+                    last_attempt
+                ) VALUES ($1, 'pending', 1, now())
                 ON CONFLICT (order_id) DO UPDATE
                 SET 
-                    failure_count = order_payouts.failure_count + 1,
-                    last_attempt_time = now(),
+                    attempts = order_payouts.attempts + 1,
+                    last_attempt = now(),
                     updated_at = now()
                 ''',
                 order_id
@@ -1328,21 +1334,27 @@ class PayoutManager:
             # Record successful payout
             await conn.execute(
                 '''
-                INSERT INTO cart_order_payouts (
+                INSERT INTO order_payouts (
                     cart_order_id, 
-                    success,
-                    total_fees_paid,
+                    status,
+                    amount,
+                    asset_name,
+                    to_address,
+                    tx_hash,
                     completed_at
-                ) VALUES ($1, true, $2, now())
+                ) VALUES ($1, 'completed', $2, 'EVR', $3, $4, now())
                 ON CONFLICT (cart_order_id) DO UPDATE
                 SET 
-                    success = true,
-                    total_fees_paid = EXCLUDED.total_fees_paid,
+                    status = 'completed',
+                    amount = EXCLUDED.amount,
+                    tx_hash = EXCLUDED.tx_hash,
                     completed_at = EXCLUDED.completed_at,
                     updated_at = now()
                 ''',
                 cart_order_id,
-                total_fees
+                total_fees,
+                DEFAULT_FEE_ADDRESS,
+                tx_hash
             )
             
             # Update cart order status
@@ -1376,16 +1388,16 @@ class PayoutManager:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 '''
-                INSERT INTO cart_order_payouts (
+                INSERT INTO order_payouts (
                     cart_order_id,
-                    success,
-                    failure_count,
-                    last_attempt_time
-                ) VALUES ($1, false, 1, now())
+                    status,
+                    attempts,
+                    last_attempt
+                ) VALUES ($1, 'pending', 1, now())
                 ON CONFLICT (cart_order_id) DO UPDATE
                 SET 
-                    failure_count = cart_order_payouts.failure_count + 1,
-                    last_attempt_time = now(),
+                    attempts = order_payouts.attempts + 1,
+                    last_attempt = now(),
                     updated_at = now()
                 ''',
                 cart_order_id
