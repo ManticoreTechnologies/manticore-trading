@@ -1,10 +1,12 @@
 """Listings API endpoints."""
 
-from fastapi import APIRouter, HTTPException, Query, status, Security
+from fastapi import APIRouter, HTTPException, Query, status, Security, Depends
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from pydantic import BaseModel
 from uuid import UUID
+from datetime import datetime, timedelta
+import asyncio
 
 from listings import (
     ListingManager, ListingError, ListingNotFoundError, InvalidPriceError,
@@ -15,21 +17,54 @@ from listings import (
     withdraw
 )
 from auth import get_current_user, auth_scheme
+from database import get_pool
 
-# Create router with security
+# Create router without global security
 router = APIRouter(
     prefix="/listings",
-    tags=["Listings"],
-    dependencies=[Security(get_current_user)]  # Require authentication for all endpoints
+    tags=["Listings"]
 )
 
 # Import management endpoints
 from .management import router as management_router
 
-# Include management router
+# Include management router (protected endpoints)
 router.include_router(management_router)
 
-""" Getters """
+# Model definitions
+class PriceSpecification(BaseModel):
+    """Model for price specification."""
+    asset_name: str
+    price_evr: Optional[Decimal] = None
+    price_asset_name: Optional[str] = None
+    price_asset_amount: Optional[Decimal] = None
+    ipfs_hash: Optional[str] = None
+    units: Optional[int] = 8  # Optional with default value of 8
+
+class CreateListingRequest(BaseModel):
+    """Request model for creating a listing."""
+    seller_address: str
+    name: str
+    description: Optional[str] = None
+    image_ipfs_hash: Optional[str] = None
+    prices: List[PriceSpecification]
+    tags: Optional[List[str]] = None
+
+class UpdateListingRequest(BaseModel):
+    """Request model for updating a listing."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    image_ipfs_hash: Optional[str] = None
+    tags: Optional[List[str]] = None
+    payout_address: Optional[str] = None
+    prices: Optional[List[PriceSpecification]] = None
+
+class WithdrawRequest(BaseModel):
+    """Request model for withdrawing from a listing."""
+    asset_name: str
+    amount: Decimal
+
+""" Public Endpoints - No Authentication Required """
 @router.get("/")
 async def list_listings(
     per_page: int = Query(50),
@@ -102,7 +137,18 @@ async def search(
 async def get_listing_by_id(listing_id: str):
     """Get a listing by ID."""
     try:
-        return await get_listing(listing_id)
+        manager = ListingManager()
+        listing = await manager.get_listing(listing_id)
+        
+        # Add tags if not present
+        if 'tags' not in listing and hasattr(listing, 'tags'):
+            listing['tags'] = listing.tags.split(',') if listing.tags else []
+            
+        # Add payout address if not present
+        if 'payout_address' not in listing and hasattr(listing, 'payout_address'):
+            listing['payout_address'] = listing.payout_address
+            
+        return listing
     except LookupError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -170,24 +216,13 @@ async def get_tag_listings(
     per_page: int = Query(50),
     page: int = Query(1)
 ):
-    """Get listings by tag with pagination."""
+    """Get listings by tag."""
     try:
-        offset = (page - 1) * per_page
-        return await get_listings_by_tag(
-            tag=tag,
+        return await ListingManager().search_listings(
+            tags=[tag],
             limit=per_page,
-            offset=offset
+            offset=(page - 1) * per_page
         )
-    except LookupError:
-        return {
-            "listings": [],
-            "total_count": 0,
-            "total_pages": 0,
-            "current_page": page,
-            "limit": per_page,
-            "offset": offset,
-            "tag": tag
-        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -277,28 +312,365 @@ async def get_seller_txns(
             detail=str(e)
         )
 
-class PriceSpecification(BaseModel):
-    """Model for price specification."""
-    asset_name: str
-    price_evr: Optional[Decimal] = None
-    price_asset_name: Optional[str] = None
-    price_asset_amount: Optional[Decimal] = None
-    ipfs_hash: Optional[str] = None
-    units: Optional[int] = 8  # Optional with default value of 8
+@router.get("/featured")
+async def get_featured_listings(
+    per_page: int = Query(10),
+    page: int = Query(1)
+):
+    """Get featured listings with pagination.
+    Featured listings are manually curated by admins."""
+    try:
+        pool = await get_pool()
+        offset = (page - 1) * per_page
+        
+        async with pool.acquire() as conn:
+            # Get featured listings
+            listings = await conn.fetch(
+                '''
+                SELECT l.*
+                FROM listings l
+                JOIN featured_listings fl ON l.id = fl.listing_id
+                WHERE l.status = 'active'
+                ORDER BY fl.featured_at DESC
+                LIMIT $1 OFFSET $2
+                ''',
+                per_page,
+                offset
+            )
+            
+            # Get total count
+            total_count = await conn.fetchval(
+                '''
+                SELECT COUNT(*)
+                FROM listings l
+                JOIN featured_listings fl ON l.id = fl.listing_id
+                WHERE l.status = 'active'
+                '''
+            )
+            
+            # Process listings
+            manager = ListingManager(pool)
+            processed_listings = []
+            for listing in listings:
+                try:
+                    full_listing = await manager.get_listing(listing['id'])
+                    processed_listings.append(full_listing)
+                except Exception as e:
+                    continue
+            
+            return {
+                "listings": processed_listings,
+                "total_count": total_count,
+                "total_pages": (total_count + per_page - 1) // per_page,
+                "current_page": page,
+                "limit": per_page,
+                "offset": offset
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
-class CreateListingRequest(BaseModel):
-    """Request model for creating a listing."""
-    seller_address: str
-    name: str
-    description: Optional[str] = None
-    image_ipfs_hash: Optional[str] = None
-    prices: List[PriceSpecification]
-    tags: Optional[List[str]] = None
+@router.get("/trending")
+async def get_trending_listings(
+    timeframe: str = Query("24h", regex="^(1h|24h|7d|30d)$"),
+    per_page: int = Query(10),
+    page: int = Query(1)
+):
+    """Get trending listings based on views, orders, and sales.
+    Timeframe options: 1h, 24h, 7d, 30d"""
+    try:
+        pool = await get_pool()
+        offset = (page - 1) * per_page
+        
+        # Calculate start time based on timeframe
+        now = datetime.utcnow()
+        timeframes = {
+            "1h": now - timedelta(hours=1),
+            "24h": now - timedelta(days=1),
+            "7d": now - timedelta(days=7),
+            "30d": now - timedelta(days=30)
+        }
+        start_time = timeframes[timeframe]
+        
+        async with pool.acquire() as conn:
+            # Get trending listings based on a weighted score of views, orders, and sales
+            listings = await conn.fetch(
+                '''
+                WITH metrics AS (
+                    SELECT 
+                        l.id,
+                        COUNT(DISTINCT v.viewer_address) as unique_views,
+                        COUNT(DISTINCT o.id) as order_count,
+                        COUNT(DISTINCT s.id) as sale_count
+                    FROM listings l
+                    LEFT JOIN listing_views v ON l.id = v.listing_id 
+                        AND v.view_time >= $1
+                    LEFT JOIN orders o ON l.id = o.listing_id 
+                        AND o.created_at >= $1
+                    LEFT JOIN sale_history s ON l.id = s.listing_id 
+                        AND s.sale_time >= $1
+                    WHERE l.status = 'active'
+                    GROUP BY l.id
+                )
+                SELECT 
+                    l.*,
+                    (m.unique_views * 1 + m.order_count * 10 + m.sale_count * 100) as score
+                FROM listings l
+                JOIN metrics m ON l.id = m.id
+                WHERE l.status = 'active'
+                ORDER BY score DESC
+                LIMIT $2 OFFSET $3
+                ''',
+                start_time,
+                per_page,
+                offset
+            )
+            
+            # Get total count
+            total_count = await conn.fetchval(
+                '''
+                SELECT COUNT(DISTINCT l.id)
+                FROM listings l
+                JOIN metrics m ON l.id = m.id
+                WHERE l.status = 'active'
+                '''
+            )
+            
+            # Process listings
+            manager = ListingManager(pool)
+            processed_listings = []
+            for listing in listings:
+                try:
+                    full_listing = await manager.get_listing(listing['id'])
+                    processed_listings.append(full_listing)
+                except Exception as e:
+                    continue
+            
+            return {
+                "listings": processed_listings,
+                "total_count": total_count,
+                "total_pages": (total_count + per_page - 1) // per_page,
+                "current_page": page,
+                "limit": per_page,
+                "offset": offset,
+                "timeframe": timeframe
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
+@router.get("/new")
+async def get_new_listings(
+    hours: int = Query(24, ge=1, le=168),  # Default 24 hours, max 7 days
+    per_page: int = Query(10),
+    page: int = Query(1)
+):
+    """Get newest listings within the specified time window."""
+    try:
+        pool = await get_pool()
+        offset = (page - 1) * per_page
+        start_time = datetime.utcnow() - timedelta(hours=hours)
+        
+        async with pool.acquire() as conn:
+            # Get new listings
+            listings = await conn.fetch(
+                '''
+                SELECT *
+                FROM listings
+                WHERE status = 'active'
+                AND created_at >= $1
+                ORDER BY created_at DESC
+                LIMIT $2 OFFSET $3
+                ''',
+                start_time,
+                per_page,
+                offset
+            )
+            
+            # Get total count
+            total_count = await conn.fetchval(
+                '''
+                SELECT COUNT(*)
+                FROM listings
+                WHERE status = 'active'
+                AND created_at >= $1
+                ''',
+                start_time
+            )
+            
+            # Process listings
+            manager = ListingManager(pool)
+            processed_listings = []
+            for listing in listings:
+                try:
+                    full_listing = await manager.get_listing(listing['id'])
+                    processed_listings.append(full_listing)
+                except Exception as e:
+                    continue
+            
+            return {
+                "listings": processed_listings,
+                "total_count": total_count,
+                "total_pages": (total_count + per_page - 1) // per_page,
+                "current_page": page,
+                "limit": per_page,
+                "offset": offset,
+                "time_window_hours": hours
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+@router.get("/home")
+async def get_home_listings(
+    featured_count: int = Query(5, ge=1, le=20),
+    trending_count: int = Query(10, ge=1, le=50),
+    new_count: int = Query(10, ge=1, le=50),
+    trending_timeframe: str = Query("24h", regex="^(1h|24h|7d|30d)$"),
+    new_hours: int = Query(24, ge=1, le=168)
+):
+    """Get featured, trending, and new listings for the home page."""
+    try:
+        pool = await get_pool()
+        manager = ListingManager(pool)
+        
+        async with pool.acquire() as conn:
+            # Get featured listings
+            featured = await conn.fetch(
+                '''
+                SELECT l.*
+                FROM listings l
+                JOIN featured_listings fl ON l.id = fl.listing_id
+                WHERE l.status = 'active'
+                AND (fl.expires_at IS NULL OR fl.expires_at > now())
+                ORDER BY fl.priority DESC, fl.featured_at DESC
+                LIMIT $1
+                ''',
+                featured_count
+            )
+            
+            # Calculate start time for trending
+            now = datetime.utcnow()
+            timeframes = {
+                "1h": now - timedelta(hours=1),
+                "24h": now - timedelta(days=1),
+                "7d": now - timedelta(days=7),
+                "30d": now - timedelta(days=30)
+            }
+            trending_start = timeframes[trending_timeframe]
+            
+            # Get trending listings
+            trending = await conn.fetch(
+                '''
+                WITH metrics AS (
+                    SELECT 
+                        l.id,
+                        COUNT(DISTINCT v.viewer_address) as unique_views,
+                        COUNT(DISTINCT o.id) as order_count,
+                        COUNT(DISTINCT s.id) as sale_count
+                    FROM listings l
+                    LEFT JOIN listing_views v ON l.id = v.listing_id 
+                        AND v.view_time >= $1
+                    LEFT JOIN orders o ON l.id = o.listing_id 
+                        AND o.created_at >= $1
+                    LEFT JOIN sale_history s ON l.id = s.listing_id 
+                        AND s.sale_time >= $1
+                    WHERE l.status = 'active'
+                    GROUP BY l.id
+                )
+                SELECT 
+                    l.*,
+                    (m.unique_views * 1 + m.order_count * 10 + m.sale_count * 100) as score
+                FROM listings l
+                JOIN metrics m ON l.id = m.id
+                WHERE l.status = 'active'
+                ORDER BY score DESC
+                LIMIT $2
+                ''',
+                trending_start,
+                trending_count
+            )
+            
+            # Get new listings
+            new_start = now - timedelta(hours=new_hours)
+            new = await conn.fetch(
+                '''
+                SELECT *
+                FROM listings
+                WHERE status = 'active'
+                AND created_at >= $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                ''',
+                new_start,
+                new_count
+            )
+            
+            # Process all listings to include full details
+            async def process_listings(listings):
+                result = []
+                for listing in listings:
+                    try:
+                        full_listing = await manager.get_listing(listing['id'])
+                        result.append(full_listing)
+                    except Exception as e:
+                        continue
+                return result
+            
+            # Process all sections concurrently
+            featured_listings, trending_listings, new_listings = await asyncio.gather(
+                process_listings(featured),
+                process_listings(trending),
+                process_listings(new)
+            )
+            
+            return {
+                "featured": {
+                    "listings": featured_listings,
+                    "total": len(featured_listings)
+                },
+                "trending": {
+                    "listings": trending_listings,
+                    "total": len(trending_listings),
+                    "timeframe": trending_timeframe
+                },
+                "new": {
+                    "listings": new_listings,
+                    "total": len(new_listings),
+                    "time_window_hours": new_hours
+                }
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+""" Protected Endpoints - Authentication Required """
 @router.post("/")
-async def create_listing(request: CreateListingRequest):
+async def create_listing(
+    request: CreateListingRequest,
+    current_user: str = Security(get_current_user)  # Add authentication
+):
     """Create a new listing."""
     try:
+        # Verify seller address matches authenticated user
+        if request.seller_address.lower() != current_user.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Seller address must match authenticated address"
+            )
+            
         manager = ListingManager()
         return await manager.create_listing(
             seller_address=request.seller_address,
@@ -319,54 +691,79 @@ async def create_listing(request: CreateListingRequest):
             detail=str(e)
         )
 
-class UpdateListingRequest(BaseModel):
-    """Request model for updating a listing."""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    image_ipfs_hash: Optional[str] = None
-    tags: Optional[List[str]] = None
-    prices: Optional[List[PriceSpecification]] = None
-
-@router.post("/by-id/{listing_id}")
-async def update_listing(listing_id: str, request: UpdateListingRequest):
-    """Update a listing's details."""
+@router.patch("/{listing_id}")
+async def update_listing(
+    listing_id: str,
+    update: UpdateListingRequest,
+    current_user: str = Security(get_current_user)
+):
+    """Update a listing.
+    
+    Only the listing owner can update their listing.
+    Cannot change: seller_address, listing_address, deposit_address, units
+    """
     try:
         manager = ListingManager()
         
-        # First verify the listing exists
-        try:
-            await manager.get_listing(listing_id)
-        except ListingNotFoundError:
+        # Get current listing to verify ownership
+        listing = await manager.get_listing(listing_id)
+        if not listing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Listing {listing_id} not found"
             )
             
-        # Build updates dict
-        updates = {}
-        if request.name is not None:
-            updates['name'] = request.name
-        if request.description is not None:
-            updates['description'] = request.description
-        if request.image_ipfs_hash is not None:
-            updates['image_ipfs_hash'] = request.image_ipfs_hash
-        if request.tags is not None:
-            updates['tags'] = request.tags
-        if request.prices is not None:
-            updates['prices'] = [dict(price) for price in request.prices]
-            
-        # Update listing
-        try:
-            updated_listing = await manager.update_listing(listing_id, updates)
-            return updated_listing
-        except ListingError as e:
+        # Verify ownership
+        if listing['seller_address'].lower() != current_user.lower():
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this listing"
             )
             
-    except HTTPException:
-        raise
+        # Build update dict with only provided fields
+        updates = {}
+        if update.name is not None:
+            updates['name'] = update.name
+        if update.description is not None:
+            updates['description'] = update.description
+        if update.image_ipfs_hash is not None:
+            updates['image_ipfs_hash'] = update.image_ipfs_hash
+        if update.tags is not None:
+            updates['tags'] = ','.join(update.tags) if update.tags else None
+        if update.payout_address is not None:
+            updates['payout_address'] = update.payout_address
+            
+        # Update base listing info if any updates
+        if updates:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    f'''
+                    UPDATE listings
+                    SET {', '.join(f"{k} = ${i+1}" for i, k in enumerate(updates.keys()))},
+                        updated_at = now()
+                    WHERE id = ${len(updates) + 1}
+                    ''',
+                    *updates.values(),
+                    listing_id
+                )
+                
+        # Update prices if provided
+        if update.prices:
+            await manager.update_listing_prices(
+                listing_id,
+                add_or_update_prices=[price.dict() for price in update.prices]
+            )
+            
+        # Get updated listing
+        updated = await manager.get_listing(listing_id)
+        return updated
+        
+    except ListingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -374,10 +771,28 @@ async def update_listing(listing_id: str, request: UpdateListingRequest):
         )
 
 @router.delete("/by-id/{listing_id}")
-async def delete_listing(listing_id: str):
+async def delete_listing(
+    listing_id: str,
+    current_user: str = Security(get_current_user)  # Add authentication
+):
     """Delete a listing."""
     try:
         manager = ListingManager()
+        
+        # Verify listing exists and user owns it
+        listing = await manager.get_listing(listing_id)
+        if not listing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Listing {listing_id} not found"
+            )
+            
+        if listing['seller_address'].lower() != current_user.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this listing"
+            )
+            
         return await manager.delete_listing(listing_id)
     except ListingNotFoundError:
         raise HTTPException(
@@ -390,36 +805,34 @@ async def delete_listing(listing_id: str):
             detail=str(e)
         )
 
-@router.get("/test/create-listing")
-async def create_test_listing():
-    """Create a test listing with sample data."""
-    try:
-        manager = ListingManager()
-        return await manager.create_test_listing()
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-class WithdrawRequest(BaseModel):
-    """Request model for withdrawing from a listing."""
-    asset_name: str
-    amount: Decimal
-    to_address: str
-
 @router.post("/{listing_id}/withdraw")
 async def withdraw_from_listing(
     listing_id: str,
-    withdraw_request: WithdrawRequest
+    withdraw_request: WithdrawRequest,
+    current_user: str = Security(get_current_user)  # Add authentication
 ):
-    """Withdraw assets from a listing."""
+    """Withdraw assets from a listing to the seller's address."""
     try:
+        # Verify listing exists and user owns it
+        manager = ListingManager()
+        listing = await manager.get_listing(listing_id)
+        if not listing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Listing {listing_id} not found"
+            )
+            
+        if listing['seller_address'].lower() != current_user.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to withdraw from this listing"
+            )
+            
         return await withdraw(
             listing_id=listing_id,
             asset_name=withdraw_request.asset_name,
             amount=withdraw_request.amount,
-            to_address=withdraw_request.to_address
+            to_address=listing['seller_address']  # Always withdraw to seller's address
         )
     except ListingNotFoundError:
         raise HTTPException(

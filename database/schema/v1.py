@@ -233,22 +233,60 @@ schema = {
             ]
         },
         {
+            'name': 'featured_listings',
+            'columns': [
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'featured_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'featured_by', 'type': 'TEXT', 'nullable': False},
+                {'name': 'priority', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'expires_at', 'type': 'TIMESTAMP'}
+            ],
+            'indexes': [
+                {'name': 'idx_featured_listing_id', 'columns': ['listing_id']},
+                {'name': 'idx_featured_at', 'columns': ['featured_at']},
+                {'name': 'idx_featured_priority', 'columns': ['priority']}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)', 'on_delete': 'CASCADE'}
+            ]
+        },
+        {
             'name': 'listing_views',
             'columns': [
-                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
                 {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
                 {'name': 'viewer_address', 'type': 'TEXT', 'nullable': False},
                 {'name': 'view_time', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
-                {'name': 'session_id', 'type': 'TEXT', 'nullable': False},
-                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
-            ],
-            'foreign_keys': [
-                {'columns': ['listing_id'], 'references': 'listings(id)'}
+                {'name': 'source', 'type': 'TEXT'},
+                {'name': 'session_id', 'type': 'TEXT'}
             ],
             'indexes': [
-                {'name': 'idx_listing_views_listing', 'columns': ['listing_id']},
-                {'name': 'idx_listing_views_time', 'columns': ['view_time']},
-                {'name': 'idx_listing_views_viewer', 'columns': ['viewer_address']}
+                {'name': 'idx_views_listing_id', 'columns': ['listing_id']},
+                {'name': 'idx_views_viewer', 'columns': ['viewer_address']},
+                {'name': 'idx_views_time', 'columns': ['view_time']}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)', 'on_delete': 'CASCADE'}
+            ]
+        },
+        {
+            'name': 'listing_metrics',
+            'columns': [
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'timeframe', 'type': 'TEXT', 'nullable': False},  # '1h', '24h', '7d', '30d'
+                {'name': 'unique_views', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'total_views', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'order_count', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'sale_count', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'revenue_evr', 'type': 'DECIMAL', 'default': '0'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_metrics_listing_id', 'columns': ['listing_id']},
+                {'name': 'idx_metrics_timeframe', 'columns': ['timeframe']},
+                {'name': 'idx_metrics_unique', 'columns': ['listing_id', 'timeframe'], 'unique': True}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)', 'on_delete': 'CASCADE'}
             ]
         },
         {
@@ -367,6 +405,37 @@ schema = {
             ],
             'checks': [
                 {'name': 'valid_order_reference', 'expression': "(order_id IS NOT NULL AND cart_order_id IS NULL) OR (cart_order_id IS NOT NULL AND order_id IS NULL)"}
+            ]
+        },
+        {
+            'name': 'sale_history',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'order_id', 'type': 'UUID', 'nullable': True},
+                {'name': 'cart_order_id', 'type': 'UUID', 'nullable': True},
+                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'price_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'seller_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'buyer_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'sale_time', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)'},
+                {'columns': ['order_id'], 'references': 'orders(id)', 'nullable': True},
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)', 'nullable': True}
+            ],
+            'indexes': [
+                {'name': 'idx_sales_listing', 'columns': ['listing_id']},
+                {'name': 'idx_sales_order', 'columns': ['order_id']},
+                {'name': 'idx_sales_cart_order', 'columns': ['cart_order_id']},
+                {'name': 'idx_sales_seller', 'columns': ['seller_address']},
+                {'name': 'idx_sales_buyer', 'columns': ['buyer_address']},
+                {'name': 'idx_sales_time', 'columns': ['sale_time']}
+            ],
+            'checks': [
+                {'name': 'valid_sale_order_reference', 'expression': "(order_id IS NOT NULL AND cart_order_id IS NULL) OR (cart_order_id IS NOT NULL AND order_id IS NULL)"}
             ]
         },
         {

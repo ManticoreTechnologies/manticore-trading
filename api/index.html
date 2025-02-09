@@ -496,6 +496,567 @@ curl -X GET http://localhost:8000/auth/verify \
                 </ul>
             </div>
         </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/listings/featured</span>
+            <p>Get featured listings with pagination</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">per_page</span>: Results per page (default: 10)</li>
+                    <li><span class="param-name">page</span>: Page number (default: 1)</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "listings": [{
+        "id": "string",
+        "seller_address": "string",
+        "name": "string",
+        "description": "string",
+        "image_ipfs_hash": "string",
+        "status": "string",
+        "created_at": "string",
+        "updated_at": "string",
+        "prices": [...]
+    }],
+    "total_count": "integer",
+    "total_pages": "integer",
+    "current_page": "integer",
+    "limit": "integer",
+    "offset": "integer"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/listings/trending</span>
+            <p>Get trending listings based on views, orders, and sales</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">timeframe</span>: Time window (1h/24h/7d/30d)</li>
+                    <li><span class="param-name">per_page</span>: Results per page (default: 10)</li>
+                    <li><span class="param-name">page</span>: Page number (default: 1)</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/listings/new</span>
+            <p>Get newest listings within a time window</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">hours</span>: Time window in hours (default: 24, max: 168)</li>
+                    <li><span class="param-name">per_page</span>: Results per page (default: 10)</li>
+                    <li><span class="param-name">page</span>: Page number (default: 1)</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/listings/home</span>
+            <p>Get featured, trending, and new listings for the home page</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">featured_count</span>: Number of featured listings (default: 5)</li>
+                    <li><span class="param-name">trending_count</span>: Number of trending listings (default: 10)</li>
+                    <li><span class="param-name">new_count</span>: Number of new listings (default: 10)</li>
+                    <li><span class="param-name">trending_timeframe</span>: Time window for trending (1h/24h/7d/30d)</li>
+                    <li><span class="param-name">new_hours</span>: Time window for new listings in hours (default: 24)</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "featured": {
+        "listings": [...],
+        "total": "integer"
+    },
+    "trending": {
+        "listings": [...],
+        "total": "integer",
+        "timeframe": "string"
+    },
+    "new": {
+        "listings": [...],
+        "total": "integer",
+        "time_window_hours": "integer"
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/listings/{listing_id}/pause</span>
+            <p>Temporarily pause a listing from accepting new orders</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "listing_id": "string",
+    "status": "paused",
+    "paused_at": "string"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/listings/{listing_id}/resume</span>
+            <p>Resume a paused listing</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "listing_id": "string",
+    "status": "active",
+    "resumed_at": "string"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/listings/{listing_id}/analytics</span>
+            <p>Get detailed analytics about listing performance</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">start_date</span>: Optional start date for analytics period</li>
+                    <li><span class="param-name">end_date</span>: Optional end date for analytics period</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "views": "integer",
+    "unique_views": "integer",
+    "sales_count": "integer",
+    "total_revenue": "decimal",
+    "conversion_rate": "float",
+    "avg_time_to_sale": "float",
+    "popular_payment_methods": {
+        "asset_name": "count"
+    },
+    "sales_by_day": {
+        "date": "count"
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/listings/batch-update</span>
+            <p>Update multiple listings at once</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "listing_ids": ["string"],
+    "updates": {
+        "field": "value"
+    }
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "total": "integer",
+    "successful": "integer",
+    "failed": "integer",
+    "results": {
+        "listing_id": {
+            "success": "boolean",
+            "error": "string"
+        }
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/listings/{listing_id}/withdraw</span>
+            <p>Withdraw assets from a listing to the seller's address. Only the listing owner can withdraw assets.</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "asset_name": "string",  // The asset to withdraw (e.g. "EVR", "BTC")
+    "amount": "decimal"      // The amount to withdraw
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "transaction_id": "string",  // The blockchain transaction ID
+    "asset_name": "string",     // The withdrawn asset
+    "amount": "decimal",        // The withdrawn amount
+    "to_address": "string",     // The destination address (seller's address)
+    "status": "string",         // Transaction status
+    "timestamp": "string"       // ISO-8601 timestamp
+}</pre>
+                <h4>Error Responses:</h4>
+                <pre>
+400 Bad Request
+{
+    "detail": "Insufficient balance"
+}
+
+403 Forbidden
+{
+    "detail": "Not authorized to withdraw from this listing"
+}
+
+404 Not Found
+{
+    "detail": "Listing {listing_id} not found"
+}</pre>
+            </div>
+            <div class="example">
+                <h4>Example using curl:</h4>
+                <pre>
+curl -X POST http://localhost:8000/listings/550e8400-e29b-41d4-a716-446655440000/withdraw \
+    -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+    -H "Content-Type: application/json" \
+    -d '{
+        "asset_name": "EVR",
+        "amount": 100.0
+    }'</pre>
+            </div>
+        </div>
+    </section>
+
+    <section id="orders">
+        <h2>Orders</h2>
+        <p>Create and manage orders. Most endpoints require authentication.</p>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/orders/create/{listing_id}</span>
+            <p>Create a new order for a listing</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "buyer_address": "string",
+    "items": [
+        {
+            "asset_name": "string",
+            "amount": "decimal"
+        }
+    ]
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "id": "string",
+    "listing_id": "string",
+    "buyer_address": "string",
+    "payment_address": "string",
+    "status": "string",
+    "created_at": "string",
+    "items": [
+        {
+            "asset_name": "string",
+            "amount": "decimal",
+            "price_evr": "decimal"
+        }
+    ],
+    "total_price_evr": "decimal"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/orders/cart</span>
+            <p>Create a cart order for multiple listings</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "buyer_address": "string",
+    "items": [
+        {
+            "listing_id": "string",
+            "asset_name": "string",
+            "amount": "decimal"
+        }
+    ]
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/orders/{order_id}</span>
+            <p>Get order details by ID</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/orders/{order_id}/balances</span>
+            <p>Get order payment balances</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "EVR": {
+        "confirmed_balance": "decimal",
+        "pending_balance": "decimal"
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/orders/{order_id}/cancel</span>
+            <p>Cancel a pending order</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "status": "cancelled"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/orders/{order_id}/dispute</span>
+            <p>Create a dispute for an order</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "reason": "string",
+    "description": "string",
+    "evidence": {
+        "files": ["string"],
+        "notes": "string"
+    }
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "dispute_id": "string",
+    "status": "opened"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/orders/{order_id}/history</span>
+            <p>Get order history and status changes</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "order_id": "string",
+    "history": [
+        {
+            "id": "string",
+            "status": "string",
+            "description": "string",
+            "details": {},
+            "created_at": "string"
+        }
+    ]
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/orders/disputes</span>
+            <p>List disputes for orders</p>
+            <div class="params">
+                <h4>Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer {token}</li>
+                </ul>
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">order_id</span>: Filter by order ID</li>
+                    <li><span class="param-name">status</span>: Filter by dispute status</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "disputes": [
+        {
+            "id": "string",
+            "order_id": "string",
+            "reason": "string",
+            "description": "string",
+            "status": "string",
+            "created_at": "string",
+            "resolved_at": "string",
+            "resolution": "string"
+        }
+    ]
+}</pre>
+            </div>
+        </div>
+    </section>
+
+    <section id="market">
+        <h2>Market Data</h2>
+        <p>Get market statistics and trends.</p>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/market/stats</span>
+            <p>Get market-wide statistics</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">start_date</span>: Optional start date for stats period</li>
+                    <li><span class="param-name">end_date</span>: Optional end date for stats period</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+{
+    "total_listings": "integer",
+    "active_listings": "integer",
+    "total_sales": "integer",
+    "total_volume": "decimal",
+    "unique_sellers": "integer",
+    "unique_buyers": "integer",
+    "avg_sale_price": "decimal",
+    "popular_payment_methods": {
+        "asset_name": "count"
+    },
+    "sales_by_day": {
+        "date": "count"
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/market/trending</span>
+            <p>Get currently trending items based on views and sales</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">category</span>: Optional category to filter by</li>
+                    <li><span class="param-name">time_frame</span>: Time frame for trend calculation (24h/7d/30d)</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+[
+    {
+        "listing_id": "string",
+        "title": "string",
+        "price_evr": "decimal",
+        "views_24h": "integer",
+        "sales_24h": "integer",
+        "trend_score": "float"
+    }
+]</pre>
+            </div>
+        </div>
+    </section>
+
+    <section id="system">
+        <h2>System Status</h2>
+        <p>System health and rate limit information.</p>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/system/health</span>
+            <p>Get system health status</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "status": "healthy",
+    "version": "string",
+    "uptime": "integer",
+    "database": "connected",
+    "blockchain": "synced"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/system/limits</span>
+            <p>Get current rate limits and usage</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "endpoint": {
+        "endpoint": "string",
+        "limit": "integer",
+        "remaining": "integer",
+        "reset_time": "string",
+        "current_usage": "integer"
+    }
+}</pre>
+            </div>
+        </div>
     </section>
 
     <section id="websockets">

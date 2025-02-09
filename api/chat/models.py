@@ -73,26 +73,3 @@ class ChatPresenceUpdate(BaseModel):
 class WebSocketMessage(BaseModel):
     type: str
     data: dict
-
-
-class WebSocketAuthMessage(BaseModel):
-    type: str = "auth"
-    token: str
-
-
-class WebSocketChatMessage(BaseModel):
-    type: str = "chat_message"
-    data: ChatMessage
-
-
-class WebSocketChannelUpdate(BaseModel):
-    type: str = "channel_update"
-    data: ChatChannelSubscription
-
-
-class ErrorResponse(BaseModel):
-    error: dict = Field(..., example={
-        "code": "string",
-        "message": "string",
-        "details": {}
-    }) 

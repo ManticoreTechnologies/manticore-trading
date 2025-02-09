@@ -119,5 +119,47 @@ async def send_global_message(
         
         return chat_msg
 
+@router.get("/assets/channels")
+async def get_asset_channels(
+    pool = Depends(get_pool),
+    current_user: str = Depends(get_current_user)
+):
+    """Get all available asset channels."""
+    async with pool.acquire() as conn:
+        # Get all distinct asset channels and their info
+        channels = await conn.fetch(
+            """
+            SELECT DISTINCT 
+                channel,
+                'asset' as type,
+                COUNT(DISTINCT sender) as participants,
+                (
+                    SELECT text 
+                    FROM chat_messages m2 
+                    WHERE m2.channel = m1.channel 
+                    AND m2.type = 'asset'
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                ) as last_message
+            FROM chat_messages m1
+            WHERE type = 'asset'
+            AND channel IS NOT NULL
+            GROUP BY channel
+            ORDER BY channel
+            """
+        )
+        
+        return {
+            "channels": [
+                {
+                    "name": row['channel'],
+                    "type": "asset",
+                    "participants": row['participants'],
+                    "lastMessage": row['last_message']
+                }
+                for row in channels
+            ]
+        }
+
 # Export the router
 __all__ = ['router'] 
