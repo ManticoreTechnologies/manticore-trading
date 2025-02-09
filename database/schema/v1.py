@@ -518,6 +518,102 @@ schema = {
                 {'name': 'idx_favorites_asset', 'columns': ['asset_name']},
                 {'name': 'idx_favorites_unique', 'columns': ['address', 'asset_name'], 'unique': True}
             ]
+        },
+        {
+            'name': 'chat_messages',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'text', 'type': 'TEXT', 'nullable': False},
+                {'name': 'sender', 'type': 'TEXT', 'nullable': False},
+                {'name': 'channel', 'type': 'TEXT'},
+                {'name': 'type', 'type': 'TEXT', 'nullable': False},  # 'global', 'asset', 'direct'
+                {'name': 'ipfs_hash', 'type': 'TEXT'},
+                {'name': 'edited', 'type': 'BOOLEAN', 'default': 'false'},
+                {'name': 'deleted', 'type': 'BOOLEAN', 'default': 'false'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_chat_messages_sender', 'columns': ['sender']},
+                {'name': 'idx_chat_messages_channel', 'columns': ['channel']},
+                {'name': 'idx_chat_messages_type', 'columns': ['type']},
+                {'name': 'idx_chat_messages_created', 'columns': ['created_at']}
+            ]
+        },
+        {
+            'name': 'chat_reactions',
+            'columns': [
+                {'name': 'message_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'user_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'emoji', 'type': 'TEXT', 'nullable': False},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_chat_reactions_message', 'columns': ['message_id']},
+                {'name': 'idx_chat_reactions_user', 'columns': ['user_address']}
+            ],
+            'constraints': [
+                {'name': 'pk_chat_reactions', 'type': 'PRIMARY KEY', 'columns': ['message_id', 'user_address', 'emoji']},
+                {'name': 'fk_chat_reactions_message', 'type': 'FOREIGN KEY', 'columns': ['message_id'], 'references': ['chat_messages', 'id']}
+            ]
+        },
+        {
+            'name': 'chat_channel_subscriptions',
+            'columns': [
+                {'name': 'user_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'channel', 'type': 'TEXT', 'nullable': False},
+                {'name': 'type', 'type': 'TEXT', 'nullable': False},  # 'global', 'asset', 'direct'
+                {'name': 'last_read_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_chat_subs_user', 'columns': ['user_address']},
+                {'name': 'idx_chat_subs_channel', 'columns': ['channel']}
+            ],
+            'constraints': [
+                {'name': 'pk_chat_subs', 'type': 'PRIMARY KEY', 'columns': ['user_address', 'channel']}
+            ]
+        },
+        {
+            'name': 'chat_presence',
+            'columns': [
+                {'name': 'user_address', 'type': 'TEXT', 'primary_key': True},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False},  # 'online', 'away', 'offline'
+                {'name': 'last_active', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ]
+        },
+        {
+            'name': 'chat_attachments',
+            'columns': [
+                {'name': 'ipfs_hash', 'type': 'TEXT', 'primary_key': True},
+                {'name': 'url', 'type': 'TEXT', 'nullable': False},
+                {'name': 'type', 'type': 'TEXT', 'nullable': False},
+                {'name': 'size', 'type': 'BIGINT', 'nullable': False},
+                {'name': 'uploader', 'type': 'TEXT', 'nullable': False},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ]
+        },
+        {
+            'name': 'chat_reports',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'message_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'reporter', 'type': 'TEXT', 'nullable': False},
+                {'name': 'reason', 'type': 'TEXT', 'nullable': False},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_chat_reports_message', 'columns': ['message_id']},
+                {'name': 'idx_chat_reports_reporter', 'columns': ['reporter']},
+                {'name': 'idx_chat_reports_status', 'columns': ['status']}
+            ],
+            'constraints': [
+                {'name': 'fk_chat_reports_message', 'type': 'FOREIGN KEY', 'columns': ['message_id'], 'references': ['chat_messages', 'id']}
+            ]
         }
     ],
     'triggers': [

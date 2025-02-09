@@ -17,7 +17,7 @@ class Price(BaseModel):
     """Model for listing price in a specific asset."""
     asset_name: str = Field(..., description="The asset name/symbol (e.g. BTC)")
     price_evr: Decimal = Field(..., description="The price in EVR")
-    units: int = Field(..., description="Decimal places for the price")
+    units: Optional[int] = Field(default=8, description="Decimal places for the price (default: 8)")
 
 class CreateListingRequest(BaseModel):
     """Model for creating a new listing."""

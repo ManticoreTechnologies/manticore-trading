@@ -284,7 +284,7 @@ class PriceSpecification(BaseModel):
     price_asset_name: Optional[str] = None
     price_asset_amount: Optional[Decimal] = None
     ipfs_hash: Optional[str] = None
-    units: Optional[int] = 8  # Default to 8 decimal places
+    units: Optional[int] = 8  # Optional with default value of 8
 
 class CreateListingRequest(BaseModel):
     """Request model for creating a listing."""

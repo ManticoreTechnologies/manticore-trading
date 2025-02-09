@@ -74,32 +74,54 @@
             overflow-x: auto;
         }
         .section-nav {
-            background: #f8f9fa;
+            background: #ffffff;
             padding: 20px;
             border-radius: 8px;
             margin: 20px 0;
             position: sticky;
             top: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid #e1e4e8;
+            z-index: 1000;
+        }
+        .section-nav h3 {
+            margin-top: 0;
+            color: #1a73e8;
+            font-size: 1.2em;
+            border-bottom: none;
         }
         .section-nav ul {
             list-style-type: none;
             padding: 0;
             margin: 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
         }
         .section-nav li {
-            margin: 10px 0;
+            margin: 0;
+            flex: 0 1 auto;
         }
         .section-nav a {
-            color: #3498db;
+            color: #1a73e8;
             text-decoration: none;
             display: block;
-            padding: 5px 10px;
-            border-radius: 4px;
-            transition: background-color 0.2s;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: #f1f3f4;
+            transition: all 0.2s ease;
+            font-weight: 500;
+            font-size: 0.95em;
+            white-space: nowrap;
         }
         .section-nav a:hover {
-            background-color: #e9ecef;
+            background: #e8f0fe;
+            color: #1967d2;
+            transform: translateY(-1px);
+        }
+        .section-nav a.active {
+            background: #1a73e8;
+            color: white;
         }
         .note {
             background: #fff3cd;
@@ -163,69 +185,168 @@
     <section id="auth">
         <h2>Authentication</h2>
         <p>
-            Authentication uses Evrmore's message signing system. The flow is:
-            1. Request a challenge for your address
-            2. Sign the challenge message with your Evrmore wallet
-            3. Submit the signature to receive a JWT token
-            4. Use the JWT token in the Authorization header for authenticated requests
+            Authentication in Manticore Trading uses Evrmore's cryptographic message signing system. This provides secure, 
+            non-custodial authentication without requiring passwords. The authentication flow consists of these steps:
         </p>
+        
+        <ol>
+            <li>Request a challenge message for your Evrmore address</li>
+            <li>Sign the challenge message using your Evrmore wallet</li>
+            <li>Submit the signature to receive a JWT token</li>
+            <li>Include the JWT token in the Authorization header for authenticated requests</li>
+        </ol>
+
+        <div class="note">
+            <strong>Security Note:</strong> Never share your private keys or sign messages from untrusted sources. 
+            The challenge message will always start with "Sign this message to authenticate: " followed by a random string.
+        </div>
 
         <div class="endpoint">
             <span class="method post">POST</span>
             <span class="path">/auth/challenge</span>
-            <p>Get a challenge to sign with your Evrmore wallet</p>
+            <p>Get a challenge message to sign with your Evrmore wallet. Each challenge expires after a short period.</p>
+            
             <div class="params">
                 <h4>Request Body:</h4>
                 <pre>
 {
-    "address": "string"  // Your Evrmore address
+    "address": "string"  // Your Evrmore address (e.g. "EUiTCqT8k33kFGsVYYLX6o6XGXrwQGoWY5")
 }</pre>
-                <h4>Response:</h4>
+
+                <h4>Response (200 OK):</h4>
                 <pre>
 {
-    "challenge_id": "string",  // Save this for the login request
-    "message": "string",       // Sign this message with your wallet
-    "expires_at": "string"     // ISO-8601 timestamp
+    "challenge_id": "string",  // Unique challenge identifier (UUID)
+    "message": "string",       // Message to sign (e.g. "Sign this message to authenticate: f868a308b3ddf86672edaf7c023f7470")
+    "expires_at": "string"     // ISO-8601 timestamp when this challenge expires
 }</pre>
+
+                <h4>Error Responses:</h4>
+                <pre>
+400 Bad Request
+{
+    "detail": "Invalid Evrmore address format"
+}
+
+429 Too Many Requests
+{
+    "detail": "Too many challenge requests. Please wait before requesting another."
+}</pre>
+            </div>
+
+            <div class="example">
+                <h4>Example using curl:</h4>
+                <pre>
+curl -X POST http://localhost:8000/auth/challenge \
+    -H "Content-Type: application/json" \
+    -d '{"address": "EUiTCqT8k33kFGsVYYLX6o6XGXrwQGoWY5"}'</pre>
             </div>
         </div>
 
         <div class="endpoint">
             <span class="method post">POST</span>
             <span class="path">/auth/login</span>
-            <p>Exchange a signed challenge for a JWT token</p>
+            <p>Exchange a signed challenge for a JWT token. The signature must be created using the Evrmore wallet corresponding to the address.</p>
+            
             <div class="params">
                 <h4>Request Body:</h4>
                 <pre>
 {
-    "challenge_id": "string",
-    "address": "string",
-    "signature": "string"
+    "challenge_id": "string",  // The challenge ID received from /auth/challenge
+    "address": "string",       // Your Evrmore address
+    "signature": "string"      // The cryptographic signature of the challenge message
 }</pre>
-                <h4>Response:</h4>
+
+                <h4>Response (200 OK):</h4>
                 <pre>
 {
-    "token": "string"  // JWT token for Authorization header
+    "token": "string"  // JWT token to use for authenticated requests
 }</pre>
+
+                <h4>Error Responses:</h4>
+                <pre>
+400 Bad Request
+{
+    "detail": "Invalid signature format"
+}
+
+401 Unauthorized
+{
+    "detail": "Failed to verify challenge: Invalid signature"
+}
+
+404 Not Found
+{
+    "detail": "Failed to verify challenge: Challenge not found"
+}
+
+410 Gone
+{
+    "detail": "Challenge has expired. Please request a new one."
+}</pre>
+            </div>
+
+            <div class="example">
+                <h4>Example using curl:</h4>
+                <pre>
+# First sign the message using your Evrmore wallet
+SIGNATURE=$(evrmore-cli signmessage "EUiTCqT8k33kFGsVYYLX6o6XGXrwQGoWY5" "Sign this message to authenticate: f868a308b3ddf86672edaf7c023f7470")
+
+# Then submit the signature
+curl -X POST http://localhost:8000/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{
+        "challenge_id": "087367a3-c74f-4971-8f29-59fbfcd18aaf",
+        "address": "EUiTCqT8k33kFGsVYYLX6o6XGXrwQGoWY5",
+        "signature": "'$SIGNATURE'"
+    }'</pre>
             </div>
         </div>
 
         <div class="endpoint">
             <span class="method get">GET</span>
             <span class="path">/auth/verify</span>
-            <p>Verify a JWT token is valid</p>
+            <p>Verify if a JWT token is valid and get the associated address. Use this endpoint to check token validity or get the authenticated user's address.</p>
+            
             <div class="params">
-                <h4>Headers:</h4>
+                <h4>Headers Required:</h4>
                 <ul>
                     <li><span class="param-name">Authorization</span>: Bearer {token}</li>
                 </ul>
-                <h4>Response:</h4>
+
+                <h4>Response (200 OK):</h4>
                 <pre>
 {
     "valid": true,
-    "address": "string"
+    "address": "string"  // The Evrmore address associated with the token
+}</pre>
+
+                <h4>Error Responses:</h4>
+                <pre>
+401 Unauthorized
+{
+    "detail": "Invalid authentication credentials"
+}
+
+401 Unauthorized
+{
+    "detail": "Token has expired"
 }</pre>
             </div>
+
+            <div class="example">
+                <h4>Example using curl:</h4>
+                <pre>
+curl -X GET http://localhost:8000/auth/verify \
+    -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."</pre>
+            </div>
+        </div>
+
+        <div class="note">
+            <strong>JWT Token Usage:</strong><br>
+            After obtaining a JWT token, include it in the Authorization header for all authenticated requests:
+            <pre>Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...</pre>
+            Tokens are valid for a limited time. If a token expires, request a new challenge and repeat the authentication process.
         </div>
     </section>
 
@@ -379,7 +500,7 @@
 
     <section id="websockets">
         <h2>WebSocket Updates</h2>
-        <p>Real-time updates for listings, orders, and market data</p>
+        <p>Real-time updates for listings, orders, market data, and chat messages</p>
 
         <div class="endpoint">
             <span class="method ws">WS</span>
@@ -515,6 +636,58 @@
                 </ul>
             </div>
         </div>
+
+        <div class="endpoint">
+            <span class="method ws">WS</span>
+            <span class="path">/ws/chat</span>
+            <p>WebSocket endpoint for real-time chat messages and updates</p>
+            <div class="params">
+                <h4>Connection Flow:</h4>
+                <ol>
+                    <li>Connect to the WebSocket endpoint</li>
+                    <li>Send authentication message with JWT token</li>
+                    <li>Start receiving and sending messages</li>
+                </ol>
+
+                <h4>Message Types:</h4>
+                <ul>
+                    <li>Authentication:
+                        <pre>
+{
+    "type": "auth",
+    "data": {
+        "token": "string"  // JWT token from /auth/login
+    }
+}</pre>
+                    </li>
+                    <li>Chat Message:
+                        <pre>
+{
+    "type": "chat_message",
+    "data": {
+        "text": "string",
+        "sender": "string",
+        "channel": "string",
+        "type": "global" | "asset" | "direct",
+        "timestamp": "string",
+        "ipfs_hash": "string"  // Optional, for attachments
+    }
+}</pre>
+                    </li>
+                    <li>Channel Update:
+                        <pre>
+{
+    "type": "channel_update",
+    "data": {
+        "name": "string",
+        "type": "string",
+        "unreadCount": number
+    }
+}</pre>
+                    </li>
+                </ul>
+            </div>
+        </div>
     </section>
 
     <section id="notifications">
@@ -560,6 +733,270 @@
         </div>
     </section>
 
+    <section id="chat">
+        <h2>Chat System</h2>
+        <p>Real-time chat system supporting global chat, asset-specific channels, and direct messages.</p>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/global</span>
+            <p>Get global chat messages</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">limit</span>: Number of messages (default: 20)</li>
+                    <li><span class="param-name">before</span>: Timestamp for pagination</li>
+                </ul>
+                <h4>Response:</h4>
+                <pre>
+[{
+    "id": "string",
+    "text": "string",
+    "sender": "string",
+    "timestamp": "string",
+    "type": "global",
+    "edited": boolean,
+    "deleted": boolean,
+    "reactions": {
+        "emoji": ["address"]
+    }
+}]</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/global</span>
+            <p>Send a message to global chat</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "text": "string",
+    "ipfs_hash": "string"  // Optional, for attachments
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/assets/channels</span>
+            <p>Get all available asset channels</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "channels": [{
+        "name": "string",
+        "type": "asset",
+        "participants": number,
+        "lastMessage": "string"
+    }]
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/assets/{asset_name}/messages</span>
+            <p>Get messages for a specific asset channel</p>
+            <div class="params">
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">limit</span>: Number of messages (default: 20)</li>
+                    <li><span class="param-name">before</span>: Timestamp for pagination</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/assets/{asset_name}/messages</span>
+            <p>Send a message to an asset channel</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "text": "string",
+    "ipfs_hash": "string"  // Optional, for attachments
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/assets/{asset_name}/subscribe</span>
+            <p>Subscribe to an asset channel</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/assets/{asset_name}/unsubscribe</span>
+            <p>Unsubscribe from an asset channel</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/channels</span>
+            <p>Get all channels the user is subscribed to</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "channels": [{
+        "name": "string",
+        "type": "global" | "asset" | "direct",
+        "unreadCount": number,
+        "lastMessage": "string"
+    }]
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/channels/{channel_name}</span>
+            <p>Get information about a specific channel</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "name": "string",
+    "type": "string",
+    "participants": number,
+    "description": "string",
+    "rules": "string"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method delete">DELETE</span>
+            <span class="path">/chat/messages/{message_id}</span>
+            <p>Delete a message (only sender can delete)</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method patch">PATCH</span>
+            <span class="path">/chat/messages/{message_id}</span>
+            <p>Edit a message (only sender can edit)</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "text": "string"
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/messages/{message_id}/report</span>
+            <p>Report a message</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "reason": "string"
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/attachments</span>
+            <p>Upload a file attachment</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <p>multipart/form-data with file</p>
+                <h4>Response:</h4>
+                <pre>
+{
+    "ipfs_hash": "string",
+    "url": "string"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/attachments/{ipfs_hash}</span>
+            <p>Get information about an attachment</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "ipfs_hash": "string",
+    "url": "string",
+    "type": "string",
+    "size": number
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/chat/channels/{channel_name}/presence</span>
+            <p>Get online users in a channel</p>
+            <div class="params">
+                <h4>Response:</h4>
+                <pre>
+{
+    "online_users": ["string"]  // Array of addresses
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/chat/presence</span>
+            <p>Update user presence status</p>
+            <div class="params">
+                <h4>Request Body:</h4>
+                <pre>
+{
+    "status": "online" | "away" | "offline"
+}</pre>
+                <h4>Response:</h4>
+                <pre>
+{
+    "success": boolean
+}</pre>
+            </div>
+        </div>
+    </section>
+
     <script>
         // Add smooth scrolling to navigation links
         document.querySelectorAll('.section-nav a').forEach(anchor => {
@@ -591,4 +1028,5 @@
     </script>
 </body>
 </html>
+
 
