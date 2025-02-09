@@ -416,17 +416,59 @@
     <div class="endpoint">
         <span class="method ws">WS</span>
         <span class="path">/ws/listings</span>
-        <p>WebSocket endpoint for real-time listings updates</p>
+        <p>WebSocket endpoint for real-time listings updates, including deposits and withdrawals</p>
         <div class="params">
             <h4>Messages:</h4>
             <ul>
-                <li>Receive Updates: 
+                <li>Receive Listing Updates: 
                     <pre>
 {
     "type": "update",
     "channel": "listings",
     "data": {
-        // Listing data
+        "listing_id": "UUID",
+        "update_type": "listing_update",
+        "changes": {
+            // Updated listing fields
+        }
+    },
+    "timestamp": "ISO-8601 timestamp"
+}</pre>
+                </li>
+                <li>Receive Transaction Updates:
+                    <pre>
+{
+    "type": "update",
+    "channel": "listings",
+    "data": {
+        "listing_id": "UUID",
+        "update_type": "transaction",
+        "transaction": {
+            "tx_hash": "string",
+            "entry_type": "deposit|withdraw",
+            "asset_name": "string",
+            "amount": "string (decimal)",
+            "confirmations": "integer",
+            "time": "ISO-8601 timestamp"
+        }
+    },
+    "timestamp": "ISO-8601 timestamp"
+}</pre>
+                </li>
+                <li>Receive Balance Updates:
+                    <pre>
+{
+    "type": "update",
+    "channel": "listings",
+    "data": {
+        "listing_id": "UUID",
+        "update_type": "balance",
+        "balances": {
+            "asset_name": {
+                "confirmed_balance": "string (decimal)",
+                "pending_balance": "string (decimal)"
+            }
+        }
     },
     "timestamp": "ISO-8601 timestamp"
 }</pre>
@@ -438,6 +480,31 @@
 }</pre>
                 </li>
             </ul>
+            <h4>Example Usage (JavaScript):</h4>
+            <pre>
+// Connect to WebSocket
+const ws = new WebSocket('ws://your-api-domain/ws/listings');
+
+// Listen for updates
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    switch(data.type) {
+        case 'update':
+            if (data.data.update_type === 'transaction') {
+                // Handle new transaction
+                console.log('New transaction:', data.data.transaction);
+            } else if (data.data.update_type === 'balance') {
+                // Handle balance update
+                console.log('Balance update:', data.data.balances);
+            }
+            break;
+        case 'ping':
+            // Respond to keep connection alive
+            ws.send('pong');
+            break;
+    }
+};</pre>
         </div>
     </div>
 
@@ -494,6 +561,137 @@
 }</pre>
                 </li>
             </ul>
+        </div>
+    </div>
+
+    <h2 id="transactions">Transaction Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/transactions/{address}</span>
+        <p>Get transaction history for a specific address</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><code>asset_name</code> (optional): Filter by asset name</li>
+                <li><code>entry_type</code> (optional): Filter by transaction type (deposit, withdraw)</li>
+                <li><code>min_confirmations</code> (optional): Minimum number of confirmations</li>
+                <li><code>per_page</code> (default: 50): Number of results per page</li>
+                <li><code>page</code> (default: 1): Page number</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "transactions": [
+        {
+            "tx_hash": "string",
+            "address": "string",
+            "entry_type": "string",
+            "asset_name": "string",
+            "amount": "string (decimal)",
+            "fee": "string (decimal)",
+            "confirmations": "integer",
+            "time": "ISO-8601 timestamp",
+            "asset_type": "string",
+            "asset_message": "string",
+            "trusted": "boolean",
+            "created_at": "ISO-8601 timestamp",
+            "updated_at": "ISO-8601 timestamp"
+        }
+    ],
+    "total_count": "integer",
+    "total_pages": "integer",
+    "current_page": "integer",
+    "limit": "integer",
+    "offset": "integer"
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/{listing_id}/transactions</span>
+        <p>Get transactions for a specific listing</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><code>asset_name</code> (optional): Filter by asset name</li>
+                <li><code>entry_type</code> (optional): Filter by transaction type (deposit, withdraw)</li>
+                <li><code>min_confirmations</code> (optional): Minimum number of confirmations</li>
+                <li><code>per_page</code> (default: 50): Number of results per page</li>
+                <li><code>page</code> (default: 1): Page number</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "listing_id": "UUID",
+    "transactions": [
+        {
+            "tx_hash": "string",
+            "address": "string",
+            "entry_type": "string",
+            "asset_name": "string",
+            "amount": "string (decimal)",
+            "fee": "string (decimal)",
+            "confirmations": "integer",
+            "time": "ISO-8601 timestamp",
+            "asset_type": "string",
+            "asset_message": "string",
+            "trusted": "boolean",
+            "created_at": "ISO-8601 timestamp",
+            "updated_at": "ISO-8601 timestamp"
+        }
+    ],
+    "total_count": "integer",
+    "total_pages": "integer",
+    "current_page": "integer",
+    "limit": "integer",
+    "offset": "integer"
+}</pre>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/listings/seller/{seller_address}/transactions</span>
+        <p>Get all transactions for a seller's listings</p>
+        <div class="params">
+            <h4>Query Parameters:</h4>
+            <ul>
+                <li><code>asset_name</code> (optional): Filter by asset name</li>
+                <li><code>entry_type</code> (optional): Filter by transaction type (deposit, withdraw)</li>
+                <li><code>min_confirmations</code> (optional): Minimum number of confirmations</li>
+                <li><code>per_page</code> (default: 50): Number of results per page</li>
+                <li><code>page</code> (default: 1): Page number</li>
+            </ul>
+            <h4>Response:</h4>
+            <pre>
+{
+    "seller_address": "string",
+    "transactions": [
+        {
+            "listing_id": "UUID",
+            "tx_hash": "string",
+            "address": "string",
+            "entry_type": "string",
+            "asset_name": "string",
+            "amount": "string (decimal)",
+            "fee": "string (decimal)",
+            "confirmations": "integer",
+            "time": "ISO-8601 timestamp",
+            "asset_type": "string",
+            "asset_message": "string",
+            "trusted": "boolean",
+            "created_at": "ISO-8601 timestamp",
+            "updated_at": "ISO-8601 timestamp"
+        }
+    ],
+    "total_count": "integer",
+    "total_pages": "integer",
+    "current_page": "integer",
+    "limit": "integer",
+    "offset": "integer"
+}</pre>
         </div>
     </div>
 
