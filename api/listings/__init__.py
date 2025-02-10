@@ -117,16 +117,6 @@ async def search(
             limit=per_page,
             offset=offset
         )
-    except LookupError:
-        # Return empty search result with pagination metadata
-        return {
-            "listings": [],
-            "total_count": 0,
-            "total_pages": 0,
-            "current_page": page,
-            "limit": per_page,
-            "offset": offset
-        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -844,6 +834,161 @@ async def withdraw_from_listing(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+@router.post("/{listing_id}/rescan")
+async def rescan_listing_balance(
+    listing_id: str,
+    current_user: str = Security(get_current_user)
+):
+    """Rescan and recalculate listing balances.
+    
+    This endpoint allows manual rescanning of a listing's balances by:
+    1. Fetching all transactions for the listing's deposit address
+    2. Recalculating confirmed and pending balances
+    3. Creating balance entries for any new assets
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Verify listing exists and user owns it
+            listing = await conn.fetchrow(
+                '''
+                SELECT seller_address, deposit_address
+                FROM listings
+                WHERE id = $1
+                ''',
+                listing_id
+            )
+            
+            if not listing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Listing {listing_id} not found"
+                )
+                
+            if listing['seller_address'].lower() != current_user.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to rescan this listing"
+                )
+
+            # Create balance entries for any new assets
+            await conn.execute(
+                '''
+                INSERT INTO listing_balances (listing_id, asset_name, confirmed_balance, pending_balance)
+                SELECT DISTINCT 
+                    l.id,
+                    te.asset_name,
+                    0,
+                    0
+                FROM transaction_entries te
+                JOIN listings l ON l.deposit_address = te.address
+                WHERE l.id = $1
+                AND te.entry_type = 'receive'
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM listing_balances lb 
+                    WHERE lb.listing_id = l.id 
+                    AND lb.asset_name = te.asset_name
+                )
+                ON CONFLICT (listing_id, asset_name) DO NOTHING
+                ''',
+                listing_id
+            )
+
+            # Recalculate confirmed balances
+            await conn.execute(
+                '''
+                WITH confirmed_txs AS (
+                    SELECT 
+                        te.asset_name,
+                        SUM(te.amount) as total_amount,
+                        MAX(te.tx_hash) as last_tx_hash,
+                        MAX(te.time) as last_tx_time
+                    FROM transaction_entries te
+                    WHERE te.address = $1
+                    AND te.entry_type = 'receive'
+                    AND te.abandoned = false
+                    AND te.confirmations >= 6
+                    GROUP BY te.asset_name
+                )
+                UPDATE listing_balances lb
+                SET 
+                    confirmed_balance = COALESCE(ct.total_amount, 0),
+                    last_confirmed_tx_hash = ct.last_tx_hash,
+                    last_confirmed_tx_time = ct.last_tx_time,
+                    updated_at = now()
+                FROM confirmed_txs ct
+                WHERE lb.listing_id = $2
+                AND lb.asset_name = ct.asset_name
+                ''',
+                listing['deposit_address'],
+                listing_id
+            )
+
+            # Recalculate pending balances
+            await conn.execute(
+                '''
+                WITH pending_txs AS (
+                    SELECT 
+                        te.asset_name,
+                        SUM(te.amount) as total_amount
+                    FROM transaction_entries te
+                    WHERE te.address = $1
+                    AND te.entry_type = 'receive'
+                    AND te.abandoned = false
+                    AND te.confirmations < 6
+                    GROUP BY te.asset_name
+                )
+                UPDATE listing_balances lb
+                SET 
+                    pending_balance = COALESCE(pt.total_amount, 0),
+                    updated_at = now()
+                FROM pending_txs pt
+                WHERE lb.listing_id = $2
+                AND lb.asset_name = pt.asset_name
+                ''',
+                listing['deposit_address'],
+                listing_id
+            )
+
+            # Get updated balances
+            balances = await conn.fetch(
+                '''
+                SELECT 
+                    asset_name,
+                    confirmed_balance,
+                    pending_balance,
+                    last_confirmed_tx_hash,
+                    last_confirmed_tx_time,
+                    updated_at
+                FROM listing_balances
+                WHERE listing_id = $1
+                ORDER BY asset_name
+                ''',
+                listing_id
+            )
+
+            return {
+                "listing_id": listing_id,
+                "balances": [{
+                    "asset_name": b['asset_name'],
+                    "confirmed_balance": str(b['confirmed_balance']),
+                    "pending_balance": str(b['pending_balance']),
+                    "last_confirmed_tx_hash": b['last_confirmed_tx_hash'],
+                    "last_confirmed_tx_time": b['last_confirmed_tx_time'].isoformat() if b['last_confirmed_tx_time'] else None,
+                    "updated_at": b['updated_at'].isoformat()
+                } for b in balances],
+                "scanned_at": datetime.utcnow().isoformat()
+            }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

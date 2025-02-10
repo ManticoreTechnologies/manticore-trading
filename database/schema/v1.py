@@ -718,6 +718,102 @@ schema = {
             ]
         }
     ],
+    'functions': [
+        {
+            'name': 'recalculate_listing_balances',
+            'parameters': [
+                {'name': 'p_listing_id', 'type': 'UUID'},
+                {'name': 'p_asset_name', 'type': 'TEXT', 'default': 'NULL'}
+            ],
+            'returns': 'void',
+            'language': 'plpgsql',
+            'body': '''
+                BEGIN
+                    -- Clear existing balances for the listing
+                    IF p_asset_name IS NULL THEN
+                        UPDATE listing_balances
+                        SET 
+                            confirmed_balance = 0,
+                            pending_balance = 0,
+                            last_confirmed_tx_hash = NULL,
+                            last_confirmed_tx_time = NULL,
+                            updated_at = now()
+                        WHERE listing_id = p_listing_id;
+                    ELSE
+                        UPDATE listing_balances
+                        SET 
+                            confirmed_balance = 0,
+                            pending_balance = 0,
+                            last_confirmed_tx_hash = NULL,
+                            last_confirmed_tx_time = NULL,
+                            updated_at = now()
+                        WHERE listing_id = p_listing_id
+                        AND asset_name = p_asset_name;
+                    END IF;
+                    
+                    -- Recalculate confirmed balances
+                    WITH confirmed_txs AS (
+                        SELECT 
+                            te.asset_name,
+                            te.amount,
+                            te.tx_hash,
+                            te.time
+                        FROM transaction_entries te
+                        JOIN listings l ON l.deposit_address = te.address
+                        WHERE l.id = p_listing_id
+                        AND te.entry_type = 'receive'
+                        AND te.abandoned = false
+                        AND te.confirmations >= 6
+                        AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
+                    )
+                    UPDATE listing_balances lb
+                    SET 
+                        confirmed_balance = COALESCE(t.total_amount, 0),
+                        last_confirmed_tx_hash = t.last_tx_hash,
+                        last_confirmed_tx_time = t.last_tx_time,
+                        updated_at = now()
+                    FROM (
+                        SELECT 
+                            asset_name,
+                            SUM(amount) as total_amount,
+                            MAX(tx_hash) as last_tx_hash,
+                            MAX(time) as last_tx_time
+                        FROM confirmed_txs
+                        GROUP BY asset_name
+                    ) t
+                    WHERE lb.listing_id = p_listing_id
+                    AND lb.asset_name = t.asset_name;
+                    
+                    -- Recalculate pending balances
+                    WITH pending_txs AS (
+                        SELECT 
+                            te.asset_name,
+                            te.amount
+                        FROM transaction_entries te
+                        JOIN listings l ON l.deposit_address = te.address
+                        WHERE l.id = p_listing_id
+                        AND te.entry_type = 'receive'
+                        AND te.abandoned = false
+                        AND te.confirmations < 6
+                        AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
+                    )
+                    UPDATE listing_balances lb
+                    SET 
+                        pending_balance = COALESCE(t.total_amount, 0),
+                        updated_at = now()
+                    FROM (
+                        SELECT 
+                            asset_name,
+                            SUM(amount) as total_amount
+                        FROM pending_txs
+                        GROUP BY asset_name
+                    ) t
+                    WHERE lb.listing_id = p_listing_id
+                    AND lb.asset_name = t.asset_name;
+                END;
+            '''
+        }
+    ],
     'triggers': [
         {
             'name': 'record_order_history_trigger',
@@ -740,129 +836,7 @@ schema = {
                             'Order status changed from ' || (OLD).status || ' to ' || (NEW).status,
                             ('{"previous_status":"' || (OLD).status || 
                              '","new_status":"' || (NEW).status || 
-                             '","changed_at":"' || CAST(now() AS TEXT) || '"}')::jsonb
-                        );
-                    END IF;
-                    RETURN NEW;
-                END;
-            '''
-        },
-        {
-            'name': 'record_cart_order_history_trigger',
-            'function_name': 'record_cart_order_history',
-            'table': 'cart_orders',
-            'timing': 'AFTER',
-            'events': ['UPDATE'],
-            'level': 'ROW',
-            'function_body': '''
-                BEGIN
-                    IF (OLD).status != (NEW).status THEN
-                        INSERT INTO order_history (
-                            cart_order_id,
-                            status,
-                            description,
-                            details
-                        ) VALUES (
-                            (NEW).id,
-                            (NEW).status,
-                            'Cart order status changed from ' || (OLD).status || ' to ' || (NEW).status,
-                            ('{"previous_status":"' || (OLD).status || 
-                             '","new_status":"' || (NEW).status || 
-                             '","changed_at":"' || CAST(now() AS TEXT) || '"}')::jsonb
-                        );
-                    END IF;
-                    RETURN NEW;
-                END;
-            '''
-        },
-        {
-            'name': 'update_price_history_trigger',
-            'function_name': 'record_price_history',
-            'table': 'listing_prices',
-            'timing': 'AFTER',
-            'events': ['INSERT', 'UPDATE'],
-            'level': 'ROW',
-            'function_body': '''
-                BEGIN
-                    INSERT INTO listing_price_history (
-                        listing_id,
-                        asset_name,
-                        price_evr,
-                        price_asset_name,
-                        price_asset_amount,
-                        change_type
-                    ) VALUES (
-                        (NEW).listing_id,
-                                (NEW).asset_name,
-                        (NEW).price_evr,
-                        (NEW).price_asset_name,
-                        (NEW).price_asset_amount,
-                        CASE 
-                            WHEN TG_OP = 'INSERT' THEN 'initial'
-                            ELSE 'update'
-                        END
-                    );
-                    RETURN NEW;
-                END;
-            '''
-        },
-        {
-            'name': 'update_seller_reputation_trigger',
-            'function_name': 'update_seller_reputation',
-            'table': 'orders',
-            'timing': 'AFTER',
-            'events': ['UPDATE'],
-            'level': 'ROW',
-            'function_body': '''
-                BEGIN
-                    IF (OLD).status != (NEW).status AND (NEW).status = 'completed' THEN
-                        INSERT INTO seller_reputation (
-                            seller_address,
-                            total_sales,
-                            successful_sales,
-                            total_volume
-                        ) VALUES (
-                            (SELECT seller_address FROM listings WHERE id = (NEW).listing_id),
-                            1,
-                            1,
-                            (SELECT COALESCE(SUM(price_evr), 0) FROM order_items WHERE order_id = (NEW).id)
-                        )
-                        ON CONFLICT (seller_address) DO UPDATE
-                        SET 
-                            total_sales = seller_reputation.total_sales + 1,
-                            successful_sales = seller_reputation.successful_sales + 1,
-                            total_volume = seller_reputation.total_volume + EXCLUDED.total_volume,
-                            updated_at = now();
-                    END IF;
-                    RETURN NEW;
-                END;
-            '''
-        },
-        {
-            'name': 'record_inventory_history_trigger',
-            'function_name': 'record_inventory_history',
-            'table': 'listing_balances',
-            'timing': 'AFTER',
-            'events': ['UPDATE'],
-            'level': 'ROW',
-            'function_body': '''
-                BEGIN
-                    IF (OLD).confirmed_balance != (NEW).confirmed_balance THEN
-                        INSERT INTO inventory_history (
-                            listing_id,
-                            asset_name,
-                            change_amount,
-                            change_type,
-                            tx_hash
-                        ) VALUES (
-                            (NEW).listing_id,
-                            (NEW).asset_name,
-                            (NEW).confirmed_balance - (OLD).confirmed_balance,
-                            CASE 
-                                WHEN (NEW).confirmed_balance > (OLD).confirmed_balance THEN 'deposit'
-                                ELSE 'withdrawal'
-                            END,
-                            (NEW).last_confirmed_tx_hash
+                             '"}')::jsonb
                         );
                     END IF;
                     RETURN NEW;

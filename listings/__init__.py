@@ -619,8 +619,9 @@ class ListingManager:
                 if tags:
                     tag_conditions = []
                     for tag in tags:
-                        tag_conditions.append(f"l.tags ILIKE ${len(params) + 1}")
-                        params.append(f"%{tag}%")
+                        param_idx = len(params) + 1
+                        tag_conditions.append(f"COALESCE(string_to_array(l.tags, ','), ARRAY[]::text[]) @> ARRAY[${param_idx}]")
+                        params.append(tag)
                     conditions.append(f"({' OR '.join(tag_conditions)})")
                 
                 # Add WHERE clause if conditions exist
