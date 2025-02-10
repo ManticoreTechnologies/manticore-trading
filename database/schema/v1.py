@@ -755,13 +755,15 @@ schema = {
                     WITH confirmed_txs AS (
                         SELECT 
                             te.asset_name,
-                            te.amount,
-                            te.tx_hash,
-                            te.time
+                            SUM(CASE WHEN te.entry_type = 'receive' THEN te.amount 
+                                    WHEN te.entry_type = 'withdraw' THEN -te.amount 
+                                    ELSE 0 END) as total_amount,
+                            MAX(CASE WHEN te.entry_type = 'receive' THEN te.tx_hash ELSE NULL END) as last_tx_hash,
+                            MAX(CASE WHEN te.entry_type = 'receive' THEN te.time ELSE NULL END) as last_tx_time
                         FROM transaction_entries te
                         JOIN listings l ON l.deposit_address = te.address
                         WHERE l.id = p_listing_id
-                        AND te.entry_type = 'receive'
+                        AND te.entry_type IN ('receive', 'withdraw')
                         AND te.abandoned = false
                         AND te.confirmations >= 6
                         AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
@@ -775,9 +777,9 @@ schema = {
                     FROM (
                         SELECT 
                             asset_name,
-                            SUM(amount) as total_amount,
-                            MAX(tx_hash) as last_tx_hash,
-                            MAX(time) as last_tx_time
+                            SUM(total_amount) as total_amount,
+                            MAX(last_tx_hash) as last_tx_hash,
+                            MAX(last_tx_time) as last_tx_time
                         FROM confirmed_txs
                         GROUP BY asset_name
                     ) t
@@ -788,11 +790,13 @@ schema = {
                     WITH pending_txs AS (
                         SELECT 
                             te.asset_name,
-                            te.amount
+                            SUM(CASE WHEN te.entry_type = 'receive' THEN te.amount 
+                                    WHEN te.entry_type = 'withdraw' THEN -te.amount 
+                                    ELSE 0 END) as total_amount
                         FROM transaction_entries te
                         JOIN listings l ON l.deposit_address = te.address
                         WHERE l.id = p_listing_id
-                        AND te.entry_type = 'receive'
+                        AND te.entry_type IN ('receive', 'withdraw')
                         AND te.abandoned = false
                         AND te.confirmations < 6
                         AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
@@ -804,7 +808,7 @@ schema = {
                     FROM (
                         SELECT 
                             asset_name,
-                            SUM(amount) as total_amount
+                            SUM(total_amount) as total_amount
                         FROM pending_txs
                         GROUP BY asset_name
                     ) t

@@ -221,6 +221,8 @@ class EvrmoreRPC:
     getaccount = RPCMethod('getaccount')
     getaccountaddress = RPCMethod('getaccountaddress')
     getaddressesbyaccount = RPCMethod('getaddressesbyaccount')
+    getaddressutxos = RPCMethod('getaddressutxos')
+    getaddressdeltas = RPCMethod('getaddressdeltas')
     getbalance = RPCMethod('getbalance')
     getnewaddress = RPCMethod('getnewaddress')
     getrawchangeaddress = RPCMethod('getrawchangeaddress')
@@ -331,6 +333,8 @@ encryptwallet = client.encryptwallet
 getaccount = client.getaccount
 getaccountaddress = client.getaccountaddress
 getaddressesbyaccount = client.getaddressesbyaccount
+getaddressutxos = client.getaddressutxos
+getaddressdeltas = client.getaddressdeltas
 getbalance = client.getbalance
 getnewaddress = client.getnewaddress
 getrawchangeaddress = client.getrawchangeaddress
@@ -445,6 +449,8 @@ __all__ = [
     'getaccount',
     'getaccountaddress',
     'getaddressesbyaccount',
+    'getaddressutxos',
+    'getaddressdeltas',
     'getbalance',
     'getnewaddress',
     'getrawchangeaddress',
