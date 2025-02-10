@@ -500,32 +500,38 @@ curl -X GET http://localhost:8000/auth/verify \
         <div class="endpoint">
             <span class="method get">GET</span>
             <span class="path">/listings/featured</span>
-            <p>Get featured listings with pagination</p>
+            <p>Get all active featured listings</p>
             <div class="params">
                 <h4>Query Parameters:</h4>
                 <ul>
                     <li><span class="param-name">per_page</span>: Results per page (default: 10)</li>
                     <li><span class="param-name">page</span>: Page number (default: 1)</li>
                 </ul>
-                <h4>Response:</h4>
+                <h4>Response Example:</h4>
                 <pre>
 {
-    "listings": [{
-        "id": "string",
-        "seller_address": "string",
-        "name": "string",
-        "description": "string",
-        "image_ipfs_hash": "string",
-        "status": "string",
-        "created_at": "string",
-        "updated_at": "string",
-        "prices": [...]
-    }],
-    "total_count": "integer",
-    "total_pages": "integer",
-    "current_page": "integer",
-    "limit": "integer",
-    "offset": "integer"
+    "listings": [
+        {
+            "id": "e4b853fe-9671-43db-bd4d-2245d4129f6c",
+            "seller_address": "EVRD2XV9pkYWHQM7rwCZMLPrj3Y5yoent1",
+            "name": "Test Credits Sale",
+            "description": "Selling some credits",
+            "prices": [
+                {
+                    "asset_name": "CREDITS",
+                    "price_evr": "100.0"
+                }
+            ],
+            "featured_at": "2025-02-09T21:20:19.550151",
+            "featured_until": "2025-02-16T21:20:19.550151",
+            "priority": 0
+        }
+    ],
+    "total_count": 1,
+    "total_pages": 1,
+    "current_page": 1,
+    "limit": 10,
+    "offset": 0
 }</pre>
             </div>
         </div>
@@ -748,6 +754,127 @@ curl -X POST http://localhost:8000/listings/550e8400-e29b-41d4-a716-446655440000
         "asset_name": "EVR",
         "amount": 100.0
     }'</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/featured/plans</span>
+            <p>Get available featured listing plans</p>
+            <div class="params">
+                <h4>Response Example:</h4>
+                <pre>
+{
+    "basic": {
+        "name": "basic",
+        "amount_evr": "100",
+        "duration_days": 7,
+        "priority_level": 0
+    },
+    "premium": {
+        "name": "premium",
+        "amount_evr": "250",
+        "duration_days": 14,
+        "priority_level": 1
+    },
+    "platinum": {
+        "name": "platinum",
+        "amount_evr": "500",
+        "duration_days": 30,
+        "priority_level": 2
+    }
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="path">/featured/payments</span>
+            <p>Create a new featured listing payment request</p>
+            <div class="params">
+                <h4>Request Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer &lt;token&gt;</li>
+                </ul>
+                <h4>Request Body Example:</h4>
+                <pre>
+{
+    "listing_id": "e4b853fe-9671-43db-bd4d-2245d4129f6c",
+    "plan_name": "basic"
+}</pre>
+                <h4>Response Example:</h4>
+                <pre>
+{
+    "id": "bd5cc11a-3676-4521-b249-e6631733bbde",
+    "listing_id": "e4b853fe-9671-43db-bd4d-2245d4129f6c",
+    "payment_address": "ETQ98Z5s6LvcdKJvvwY6eKeX2uymPGUEV3",
+    "amount_evr": "100",
+    "duration_days": 7,
+    "priority_level": 0,
+    "status": "pending",
+    "created_at": "2025-02-09T21:20:19.550151",
+    "expires_at": null
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/featured/payments/{payment_id}</span>
+            <p>Get status of a featured listing payment</p>
+            <div class="params">
+                <h4>Request Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer &lt;token&gt;</li>
+                </ul>
+                <h4>Path Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">payment_id</span>: UUID of the payment</li>
+                </ul>
+                <h4>Response Example:</h4>
+                <pre>
+{
+    "id": "bd5cc11a-3676-4521-b249-e6631733bbde",
+    "listing_id": "e4b853fe-9671-43db-bd4d-2245d4129f6c",
+    "payment_address": "ETQ98Z5s6LvcdKJvvwY6eKeX2uymPGUEV3",
+    "amount_evr": "100",
+    "duration_days": 7,
+    "priority_level": 0,
+    "status": "completed",
+    "created_at": "2025-02-09T21:20:19.550151",
+    "expires_at": "2025-02-16T21:20:19.550151"
+}</pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="path">/featured/payments</span>
+            <p>List all featured listing payments for the authenticated user</p>
+            <div class="params">
+                <h4>Request Headers:</h4>
+                <ul>
+                    <li><span class="param-name">Authorization</span>: Bearer &lt;token&gt;</li>
+                </ul>
+                <h4>Query Parameters:</h4>
+                <ul>
+                    <li><span class="param-name">listing_id</span>: (Optional) Filter by listing ID</li>
+                </ul>
+                <h4>Response Example:</h4>
+                <pre>
+[
+    {
+        "id": "bd5cc11a-3676-4521-b249-e6631733bbde",
+        "listing_id": "e4b853fe-9671-43db-bd4d-2245d4129f6c",
+        "payment_address": "ETQ98Z5s6LvcdKJvvwY6eKeX2uymPGUEV3",
+        "amount_evr": "100",
+        "duration_days": 7,
+        "priority_level": 0,
+        "status": "pending",
+        "created_at": "2025-02-09T21:20:19.550151",
+        "expires_at": null
+    }
+]</pre>
             </div>
         </div>
     </section>

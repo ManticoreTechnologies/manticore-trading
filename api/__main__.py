@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from database import init_db, close as db_close, get_pool
 from monitor import monitor_transactions
 from orders import PayoutManager
+from workers.featured_payments import run_worker as run_featured_payments
 
 # Configure logging
 logging.basicConfig(
@@ -103,6 +104,15 @@ async def run_payout_processor(processor):
         # Don't raise here, just log the error
         # This allows the API to run even if payout processing fails
 
+async def run_featured_payments_worker():
+    """Run the featured payments worker."""
+    try:
+        logger.info("Starting featured payments worker")
+        await run_featured_payments()
+    except Exception as e:
+        logger.error(f"Featured payments worker error: {e}")
+        # Don't raise here, just log the error
+
 async def main():
     """Run the API server, blockchain monitor, and payout processor."""
     global monitor, payout_processor, server, should_exit
@@ -123,7 +133,8 @@ async def main():
         tasks = [
             asyncio.create_task(run_api(), name="api"),
             asyncio.create_task(run_monitor(monitor), name="monitor"),
-            asyncio.create_task(run_payout_processor(payout_processor), name="payout")
+            asyncio.create_task(run_payout_processor(payout_processor), name="payout"),
+            asyncio.create_task(run_featured_payments_worker(), name="featured_payments")
         ]
         
         logger.info("All services started")
@@ -139,7 +150,7 @@ async def main():
                         exc = task.exception()
                         if exc:
                             logger.error(f"Task {task.get_name()} failed with error: {exc}")
-                            # Don't exit on monitor/payout failures
+                            # Don't exit on monitor/payout/featured_payments failures
                             if task.get_name() == "api":
                                 should_exit = True
                                 break

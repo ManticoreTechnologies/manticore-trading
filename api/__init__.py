@@ -126,6 +126,7 @@ from .notifications import router as notifications_router
 from .auth import router as auth_router
 from .profile import router as profile_router
 from .chat import router as chat_router
+from .listings.featured import router as featured_router
 
 # Include all routers
 app.include_router(listings_router)
@@ -137,3 +138,4 @@ app.include_router(notifications_router)
 app.include_router(auth_router)
 app.include_router(profile_router)
 app.include_router(chat_router)
+app.include_router(featured_router)

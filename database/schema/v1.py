@@ -235,19 +235,52 @@ schema = {
         {
             'name': 'featured_listings',
             'columns': [
-                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'listing_id', 'type': 'UUID', 'primary_key': True},
                 {'name': 'featured_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
                 {'name': 'featured_by', 'type': 'TEXT', 'nullable': False},
                 {'name': 'priority', 'type': 'INTEGER', 'default': '0'},
-                {'name': 'expires_at', 'type': 'TIMESTAMP'}
+                {'name': 'expires_at', 'type': 'TIMESTAMP', 'nullable': False}
             ],
             'indexes': [
-                {'name': 'idx_featured_listing_id', 'columns': ['listing_id']},
                 {'name': 'idx_featured_at', 'columns': ['featured_at']},
-                {'name': 'idx_featured_priority', 'columns': ['priority']}
+                {'name': 'idx_featured_priority', 'columns': ['priority']},
+                {'name': 'idx_featured_expires', 'columns': ['expires_at']}
             ],
             'foreign_keys': [
                 {'columns': ['listing_id'], 'references': 'listings(id)', 'on_delete': 'CASCADE'}
+            ],
+            'checks': [
+                {'name': 'valid_featured_dates', 'expression': "expires_at > featured_at"}
+            ]
+        },
+        {
+            'name': 'featured_listing_payments',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'listing_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'payment_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount_evr', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'duration_days', 'type': 'INTEGER', 'nullable': False},
+                {'name': 'priority_level', 'type': 'INTEGER', 'default': '0'},
+                {'name': 'status', 'type': 'TEXT', 'nullable': False, 'default': "'pending'"},
+                {'name': 'tx_hash', 'type': 'TEXT'},
+                {'name': 'paid_at', 'type': 'TIMESTAMP'},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'indexes': [
+                {'name': 'idx_featured_payments_listing', 'columns': ['listing_id']},
+                {'name': 'idx_featured_payments_address', 'columns': ['payment_address'], 'unique': True},
+                {'name': 'idx_featured_payments_status', 'columns': ['status']},
+                {'name': 'idx_featured_payments_created', 'columns': ['created_at']}
+            ],
+            'foreign_keys': [
+                {'columns': ['listing_id'], 'references': 'listings(id)', 'on_delete': 'CASCADE'}
+            ],
+            'checks': [
+                {'name': 'valid_payment_status', 'expression': "status IN ('pending', 'completed', 'expired')"},
+                {'name': 'valid_duration', 'expression': "duration_days > 0"},
+                {'name': 'valid_amount', 'expression': "amount_evr > 0"}
             ]
         },
         {
