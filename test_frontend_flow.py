@@ -7,6 +7,7 @@ import subprocess
 from decimal import Decimal
 import time
 import os
+from config import load_config
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +30,11 @@ class FrontendClientTest:
         self.order_id = None
         self.listing_file = "test_listing_id.txt"
         self.deposit_address = None
+        
+        # Load config
+        config = load_config()
+        self.min_confirmations = int(config.get('DEFAULT', 'min_confirmations', fallback=6))
+        logger.info(f"Using minimum confirmations: {self.min_confirmations}")
 
     def run_cmd(self, cmd: str) -> dict:
         """Run a shell command and return parsed JSON output."""
@@ -188,7 +194,7 @@ class FrontendClientTest:
         
         # Monitor balance until confirmed
         logger.info("Waiting for transaction to be confirmed...")
-        max_wait = 60  # Maximum wait time in seconds
+        max_wait = 600  # Maximum wait time in seconds (10 minutes)
         start_time = time.time()
         
         while True:
@@ -213,14 +219,15 @@ class FrontendClientTest:
                 logger.info(f"CREDITS Balance - Confirmed: {confirmed}, Pending: {pending}")
                 
                 if confirmed >= 2.0:
-                    logger.info("Transaction confirmed")
+                    logger.info(f"Transaction confirmed with {self.min_confirmations} confirmations")
                     break
                 elif pending >= 2.0:
                     logger.info("Transaction detected in mempool, waiting for confirmation...")
+                    logger.info(f"This may take approximately {self.min_confirmations} minutes...")
                 else:
                     logger.info("Waiting for transaction to be detected...")
             
-            await asyncio.sleep(2)
+            await asyncio.sleep(10)  # Check every 10 seconds
 
         logger.info("Funding completed and confirmed")
 
@@ -377,9 +384,10 @@ class FrontendClientTest:
             ''')["output"]
             
             logger.info(f"Payment sent: {tx_hash}")
+            logger.info(f"Waiting for payment to be confirmed (approximately {self.min_confirmations} minutes)...")
             
             # Wait for order to be processed
-            max_wait = 60  # Maximum wait time in seconds
+            max_wait = 600  # Maximum wait time in seconds (10 minutes)
             start_time = time.time()
             
             while True:
@@ -399,7 +407,7 @@ class FrontendClientTest:
                 elif status == "failed":
                     raise ValueError("Order processing failed")
                     
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)  # Check every 10 seconds
             
             # Verify balances after order
             listing_data = self.run_cmd(f'''
