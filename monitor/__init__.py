@@ -193,6 +193,21 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
+                # Update cart order status when payment is received
+                await conn.execute(
+                    '''
+                    UPDATE cart_orders co
+                    SET 
+                        status = 'paid',
+                        updated_at = now()
+                    FROM cart_order_balances cob
+                    WHERE co.id = cob.cart_order_id
+                    AND cob.asset_name = 'EVR'
+                    AND cob.confirmed_balance >= co.required_payment
+                    AND co.status = 'pending'
+                    '''
+                )
+
                 # Update pending balances for listings
                 await conn.execute(
                     '''

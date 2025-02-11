@@ -145,6 +145,7 @@ schema = {
                 {'name': 'payout_tx_hash', 'type': 'TEXT'},
                 {'name': 'payout_error', 'type': 'TEXT'},
                 {'name': 'payout_attempts', 'type': 'INT8', 'default': '0'},
+                {'name': 'required_payment', 'type': 'DECIMAL', 'default': '0'},
                 {'name': 'last_payout_attempt', 'type': 'TIMESTAMP'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
                 {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}

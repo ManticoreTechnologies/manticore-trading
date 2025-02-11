@@ -596,7 +596,8 @@ class OrderManager:
             # Calculate fee
             fee_percent = Decimal(str(DEFAULT_FEE_PERCENT))
             total_fee = total_price * fee_percent
-            logger.debug(f"Calculated total price: {total_price} EVR, fee: {total_fee} EVR")
+            total_required_payment = total_price + total_fee
+            logger.debug(f"Calculated total price: {total_price} EVR, fee: {total_fee} EVR, required payment: {total_required_payment} EVR")
             
             # Create cart order in its own transaction
             async with self.pool.acquire() as conn:
@@ -604,12 +605,14 @@ class OrderManager:
                     '''
                     INSERT INTO cart_orders (
                         buyer_address,
-                        payment_address
-                    ) VALUES ($1, $2)
+                        payment_address,
+                        required_payment
+                    ) VALUES ($1, $2, $3)
                     RETURNING *
                     ''',
                     buyer_address,
-                    payment_address
+                    payment_address,
+                    total_required_payment
                 )
                 logger.debug(f"Created cart order: {cart_order['id']}")
             

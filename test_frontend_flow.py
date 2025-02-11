@@ -451,7 +451,9 @@ class FrontendClientTest:
                 ''')
                 
                 status = order_status.get("status")
+                required_payment = order_status.get("required_payment", "unknown")
                 logger.info(f"Order status: {status}")
+                logger.info(f"Required payment: {required_payment} EVR")
                 
                 # Get payment balances
                 balances = self.run_cmd(f'''
