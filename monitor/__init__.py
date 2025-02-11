@@ -370,59 +370,94 @@ class TransactionMonitor:
                     logger.debug(f"No relevant entries found for transaction {tx_hash}")
                     return
                 
-                # Store all entries in database
+                # Store all entries in database and update balances
                 async with self.pool.acquire() as conn:
-                    for entry in entries:
-                        # Store transaction entry
-                        await conn.execute(
-                            '''
-                            INSERT INTO transaction_entries (
-                                tx_hash, address, entry_type, asset_name,
-                                amount, fee, confirmations, time,
-                                asset_type, asset_message, vout,
-                                trusted, bip125_replaceable, abandoned,
-                                updated_at
+                    async with conn.transaction():
+                        for entry in entries:
+                            # Store transaction entry
+                            await conn.execute(
+                                '''
+                                INSERT INTO transaction_entries (
+                                    tx_hash, address, entry_type, asset_name,
+                                    amount, fee, confirmations, time,
+                                    asset_type, asset_message, vout,
+                                    trusted, bip125_replaceable, abandoned,
+                                    updated_at
+                                )
+                                VALUES (
+                                    $1, $2, $3, $4, $5, $6, $7, $8,
+                                    $9, $10, $11, $12, $13, $14, now()
+                                )
+                                ON CONFLICT (tx_hash, address, entry_type, asset_name)
+                                DO UPDATE SET
+                                    amount = $5,
+                                    fee = $6,
+                                    confirmations = $7,
+                                    time = $8,
+                                    asset_type = $9,
+                                    asset_message = $10,
+                                    vout = $11,
+                                    trusted = $12,
+                                    bip125_replaceable = $13,
+                                    abandoned = $14,
+                                    updated_at = now()
+                                ''',
+                                entry['tx_hash'],
+                                entry['address'],
+                                entry['entry_type'],
+                                entry['asset_name'],
+                                entry['amount'],
+                                entry['fee'],
+                                entry['confirmations'],
+                                entry['time'],
+                                entry.get('asset_type'),
+                                entry.get('asset_message'),
+                                entry['vout'],
+                                entry['trusted'],
+                                entry['bip125_replaceable'],
+                                entry['abandoned']
                             )
-                            VALUES (
-                                $1, $2, $3, $4, $5, $6, $7, $8,
-                                $9, $10, $11, $12, $13, $14, now()
-                            )
-                            ON CONFLICT (tx_hash, address, entry_type, asset_name)
-                            DO UPDATE SET
-                                amount = $5,
-                                fee = $6,
-                                confirmations = $7,
-                                time = $8,
-                                asset_type = $9,
-                                asset_message = $10,
-                                vout = $11,
-                                trusted = $12,
-                                bip125_replaceable = $13,
-                                abandoned = $14,
-                                updated_at = now()
-                            ''',
-                            entry['tx_hash'],
-                            entry['address'],
-                            entry['entry_type'],
-                            entry['asset_name'],
-                            entry['amount'],
-                            entry['fee'],
-                            entry['confirmations'],
-                            entry['time'],
-                            entry.get('asset_type'),
-                            entry.get('asset_message'),
-                            entry['vout'],
-                            entry['trusted'],
-                            entry['bip125_replaceable'],
-                            entry['abandoned']
-                        )
 
-                        # Log transaction processing
-                        logger.info(
-                            f"Processed {entry['entry_type']} entry for {entry['asset_name']}: "
-                            f"tx={entry['tx_hash']}, address={entry['address']}, "
-                            f"amount={entry['amount']}, confirmations={entry['confirmations']}"
-                        )
+                            # Immediately update listing balances for this transaction
+                            if entry['entry_type'] == 'receive' and not entry['abandoned']:
+                                # Update or create balance entry
+                                await conn.execute(
+                                    '''
+                                    INSERT INTO listing_balances (
+                                        listing_id, asset_name, confirmed_balance, pending_balance
+                                    )
+                                    SELECT 
+                                        l.id,
+                                        $1,
+                                        CASE WHEN $3::int >= $4::int THEN $2 ELSE 0 END,
+                                        CASE WHEN $3::int < $4::int THEN $2 ELSE 0 END
+                                    FROM listings l
+                                    WHERE l.deposit_address = $5
+                                    ON CONFLICT (listing_id, asset_name) DO UPDATE
+                                    SET 
+                                        confirmed_balance = CASE 
+                                            WHEN $3::int >= $4::int THEN listing_balances.confirmed_balance + $2
+                                            ELSE listing_balances.confirmed_balance
+                                        END,
+                                        pending_balance = CASE 
+                                            WHEN $3::int < $4::int THEN listing_balances.pending_balance + $2
+                                            ELSE listing_balances.pending_balance
+                                        END,
+                                        updated_at = now()
+                                    ''',
+                                    entry['asset_name'],
+                                    entry['amount'],
+                                    entry['confirmations'],
+                                    self.min_confirmations,
+                                    entry['address']
+                                )
+
+                            # Log transaction processing
+                            logger.info(
+                                f"Processed {entry['entry_type']} entry for {entry['asset_name']}: "
+                                f"tx={entry['tx_hash']}, address={entry['address']}, "
+                                f"amount={entry['amount']}, confirmations={entry['confirmations']}"
+                            )
                 
             except Exception as e:
                 if "No such mempool or blockchain transaction" in str(e):
