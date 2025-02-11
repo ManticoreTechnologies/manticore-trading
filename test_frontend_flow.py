@@ -271,6 +271,7 @@ class FrontendClientTest:
         # Pause listing
         pause_resp = self.run_cmd(f'''
             curl -s -L -X POST {self.api_url}/listings/{self.listing_id}/pause \\
+                -H "Content-Type: application/json" \\
                 -H "Authorization: Bearer {self.auth_token}"
         ''')
         
@@ -292,6 +293,7 @@ class FrontendClientTest:
         # Resume listing
         resume_resp = self.run_cmd(f'''
             curl -s -L -X POST {self.api_url}/listings/{self.listing_id}/resume \\
+                -H "Content-Type: application/json" \\
                 -H "Authorization: Bearer {self.auth_token}"
         ''')
         

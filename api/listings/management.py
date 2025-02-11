@@ -87,12 +87,16 @@ class ListingAnalytics(BaseModel):
     popular_payment_methods: Dict[str, int]
     sales_by_day: Dict[str, int]
 
-@router.post("/listings/{listing_id}/pause")
-async def pause_listing(listing_id: str):
+@router.post("/{listing_id}/pause")
+async def pause_listing(
+    listing_id: str,
+    current_user: str = Security(get_current_user)
+):
     """Temporarily pause a listing from accepting new orders.
     
     Args:
         listing_id: The listing's UUID
+        current_user: The authenticated user's address
         
     Returns:
         Dict containing updated listing status
@@ -100,12 +104,12 @@ async def pause_listing(listing_id: str):
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Verify listing exists and is active
+            # Verify listing exists, is active, and owned by user
             listing = await conn.fetchrow(
                 '''
-                SELECT id, status
+                SELECT id, status, seller_address
                 FROM listings
-                WHERE id = $1 AND status = 'active'
+                WHERE id = $1
                 ''',
                 listing_id
             )
@@ -113,7 +117,21 @@ async def pause_listing(listing_id: str):
             if not listing:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Listing {listing_id} not found or not active"
+                    detail=f"Listing {listing_id} not found"
+                )
+
+            # Verify ownership
+            if listing['seller_address'].lower() != current_user.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to pause this listing"
+                )
+
+            # Verify status is active
+            if listing['status'] != 'active':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Listing must be active to pause (current status: {listing['status']})"
                 )
             
             # Update listing status
@@ -141,12 +159,16 @@ async def pause_listing(listing_id: str):
             detail=str(e)
         )
 
-@router.post("/listings/{listing_id}/resume")
-async def resume_listing(listing_id: str):
+@router.post("/{listing_id}/resume")
+async def resume_listing(
+    listing_id: str,
+    current_user: str = Security(get_current_user)
+):
     """Resume a paused listing.
     
     Args:
         listing_id: The listing's UUID
+        current_user: The authenticated user's address
         
     Returns:
         Dict containing updated listing status
@@ -154,12 +176,12 @@ async def resume_listing(listing_id: str):
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Verify listing exists and is paused
+            # Verify listing exists, is paused, and owned by user
             listing = await conn.fetchrow(
                 '''
-                SELECT id, status
+                SELECT id, status, seller_address
                 FROM listings
-                WHERE id = $1 AND status = 'paused'
+                WHERE id = $1
                 ''',
                 listing_id
             )
@@ -167,7 +189,21 @@ async def resume_listing(listing_id: str):
             if not listing:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Listing {listing_id} not found or not paused"
+                    detail=f"Listing {listing_id} not found"
+                )
+
+            # Verify ownership
+            if listing['seller_address'].lower() != current_user.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to resume this listing"
+                )
+
+            # Verify status is paused
+            if listing['status'] != 'paused':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Listing must be paused to resume (current status: {listing['status']})"
                 )
             
             # Update listing status
