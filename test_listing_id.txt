@@ -1,5 +1,5 @@
 {
-  "listing_id": "6a138286-494c-4cac-ad02-9bb51d2c76d4",
-  "seller_address": "EcYnMB3H3hA3ZkBeRC35AGD5J5DhDidoww",
-  "deposit_address": "EV1f2Vf9mr9WB5VtPa5dSqy5iwowHDnWSS"
+  "listing_id": "e9e2b050-d835-47d3-ace6-aebc9519ad93",
+  "seller_address": "ETZvkhJhNrMjNU6unxnQbAXupoxiJyRz1N",
+  "deposit_address": "ET1BxGxoe4Pfueu7yfiz2Q3FrqcKmX1p56"
 }

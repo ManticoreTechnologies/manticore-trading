@@ -1157,55 +1157,63 @@ class PayoutManager:
             )
 
     async def _process_cart_order_payout(self, conn, cart_order: Dict[str, Any]):
-        """Process payout for a cart order.
-        
-        Args:
-            conn: Database connection
-            cart_order: Cart order details
-            
-        Raises:
-            PayoutError: If payout fails
-        """
+        """Process payout for a cart order."""
         cart_order_id = cart_order['id']
-        logger.info(f"Starting payout process for cart order {cart_order_id}")
-        
-        # Get cart order items with listing details
-        items = await conn.fetch(
-            '''
-            SELECT 
-                coi.*,
-                l.seller_address,
-                l.deposit_address,
-                l.name as listing_name
-            FROM cart_order_items coi
-            JOIN listings l ON l.id = coi.listing_id
-            WHERE coi.cart_order_id = $1
-            ''',
-            cart_order_id
-        )
-        
-        if not items:
-            raise PayoutError(f"No items found for cart order {cart_order_id}")
-            
-        logger.info(f"Processing {len(items)} items for cart order {cart_order_id}")
-        
-        # Group payments by seller
-        seller_payments = {}
-        for item in items:
-            seller_address = item['seller_address']
-            price_evr = item['price_evr']
-            
-            if seller_address not in seller_payments:
-                seller_payments[seller_address] = Decimal('0')
-            seller_payments[seller_address] += price_evr
-            logger.info(f"Added {price_evr} EVR payment for seller {seller_address}")
-            
-        # Calculate total fees
-        total_fees = sum(item['fee_evr'] for item in items)
-        logger.info(f"Total fees for cart order {cart_order_id}: {total_fees} EVR")
+        logger.info(f"Processing payout for cart order {cart_order_id}")
         
         try:
-            # First send assets to buyer
+            # Get order items with listing details
+            items = await conn.fetch(
+                '''
+                SELECT 
+                    coi.*,
+                    l.seller_address,
+                    l.deposit_address,
+                    l.id as listing_id
+                FROM cart_order_items coi
+                JOIN cart_orders co ON co.id = coi.cart_order_id
+                JOIN listings l ON l.id = coi.listing_id
+                WHERE coi.cart_order_id = $1
+                ''',
+                cart_order_id
+            )
+            
+            if not items:
+                raise PayoutError(f"No items found for cart order {cart_order_id}")
+                
+            logger.info(f"Processing {len(items)} items for cart order {cart_order_id}")
+
+            # Record payout intent BEFORE starting any transfers
+            total_evr_amount = sum(item['price_evr'] + item['fee_evr'] for item in items)
+            await conn.execute(
+                '''
+                INSERT INTO order_payouts (
+                    cart_order_id,
+                    amount,
+                    asset_name,
+                    to_address,
+                    status,
+                    attempts,
+                    last_attempt
+                ) VALUES ($1, $2, 'EVR', $3, 'processing', 1, now())
+                ON CONFLICT (cart_order_id) DO UPDATE
+                SET 
+                    status = 'processing',
+                    amount = EXCLUDED.amount,
+                    attempts = order_payouts.attempts + 1,
+                    last_attempt = now(),
+                    updated_at = now()
+                ''',
+                cart_order_id,
+                total_evr_amount,
+                DEFAULT_FEE_ADDRESS
+            )
+
+            # Track successful and failed transfers
+            successful_transfers = []
+            failed_transfers = []
+            
+            # First process all asset transfers to buyers
             for item in items:
                 try:
                     logger.info(
@@ -1219,7 +1227,8 @@ class PayoutManager:
                         logger.info(f"Asset info: {asset_info}")
                     except Exception as e:
                         logger.error(f"Failed to get asset data for {item['asset_name']}: {e}")
-                        raise PayoutError(f"Asset {item['asset_name']} not found or invalid")
+                        failed_transfers.append((item, str(e)))
+                        continue
 
                     # Validate amount is valid
                     amount = float(item['amount'])  # Convert to float for RPC
@@ -1233,7 +1242,7 @@ class PayoutManager:
                         cart_order['buyer_address'],  # To address
                         "",                      # Message
                         0,                       # Expire time
-                        item['deposit_address'], # EVR change address (back to listing)
+                        settings_conf['change_address'], # EVR change address
                         item['deposit_address']  # Asset change address (back to listing)
                     )
                     tx_hash = result[0] if isinstance(result, list) else result
@@ -1247,7 +1256,7 @@ class PayoutManager:
                             amount, fee, confirmations, time,
                             asset_type, asset_message, trusted,
                             created_at, updated_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9, $10, now(), now())
                         ''',
                         tx_hash,                    # tx_hash
                         item['deposit_address'],    # address
@@ -1256,7 +1265,6 @@ class PayoutManager:
                         item['amount'],             # amount
                         Decimal('0'),               # fee
                         0,                          # confirmations
-                        datetime.now(timezone.utc), # time
                         'transfer_asset',           # asset_type
                         '',                         # asset_message
                         True                        # trusted
@@ -1284,104 +1292,224 @@ class PayoutManager:
                         item['seller_address'],
                         cart_order['buyer_address']
                     )
+
+                    successful_transfers.append((item, tx_hash))
                     
                 except Exception as e:
                     logger.error(f"Failed to transfer {item['asset_name']}: {e}")
-                    raise PayoutError(f"Failed to transfer {item['asset_name']}: {str(e)}")
-            
-            # Then send EVR to sellers and fee address using sendmany
-            # Convert all amounts to float for RPC
-            payments = {
-                addr: float(amount)  # Convert Decimal to float
-                for addr, amount in seller_payments.items()
-            }
-            if total_fees > 0:
-                payments[DEFAULT_FEE_ADDRESS] = float(total_fees)
-            
-            # Send all EVR payments in one transaction
+                    failed_transfers.append((item, str(e)))
+                    continue
+
+            # Now prepare the final EVR payments based on successful/failed transfers
             try:
-                logger.info(f"Sending EVR payments for cart order {cart_order_id}: {payments}")
-                tx_hash = rpc_client.sendmany(
-                    "",  # fromaccount
-                    payments,  # amounts
-                    1,  # minconf
-                    f"Cart order {cart_order_id} payout"  # comment
-                )
-                logger.info(f"EVR payments successful: {tx_hash}")
+                # Calculate payments for successful transfers only
+                seller_payments = {}
+                total_fees = Decimal('0')
+                total_refund = Decimal('0')
+
+                # Process successful transfers - pay sellers and accumulate fees
+                for item, _ in successful_transfers:
+                    seller_address = item['seller_address']
+                    price_evr = item['price_evr']
+                    fee_evr = item['fee_evr']
+                    
+                    if seller_address not in seller_payments:
+                        seller_payments[seller_address] = Decimal('0')
+                    seller_payments[seller_address] += price_evr
+                    total_fees += fee_evr
+                    logger.info(f"Added {price_evr} EVR payment for seller {seller_address} (successful transfer)")
+
+                # Calculate refund for failed transfers
+                for item, _ in failed_transfers:
+                    total_refund += item['price_evr'] + item['fee_evr']
+                    logger.info(f"Added {item['price_evr'] + item['fee_evr']} EVR to refund (failed transfer)")
+
+                # Prepare final payment dictionary
+                payments = {
+                    addr: float(amount)  # Convert Decimal to float
+                    for addr, amount in seller_payments.items()
+                }
                 
-                # Record outgoing EVR transactions
-                for address, amount in payments.items():
+                # Add fee address if there are successful transfers
+                if total_fees > 0:
+                    payments[DEFAULT_FEE_ADDRESS] = float(total_fees)
+                    logger.info(f"Added {total_fees} EVR fee payment")
+
+                # Add refund if there are failed transfers
+                if total_refund > 0:
+                    payments[cart_order['buyer_address']] = float(total_refund)
+                    logger.info(f"Added {total_refund} EVR refund payment")
+
+                # Send all EVR payments in one transaction
+                if payments:
+                    logger.info(f"Sending final EVR payments for cart order {cart_order_id}: {payments}")
+                    tx_hash = rpc_client.sendmany(
+                        "",  # fromaccount
+                        payments,  # amounts
+                        1,  # minconf
+                        f"Cart order {cart_order_id} payout and refund"  # comment
+                    )
+                    logger.info(f"EVR payments successful: {tx_hash}")
+                    
+                    # Record all payment transactions
+                    for address, amount in payments.items():
+                        payment_type = 'fee' if address == DEFAULT_FEE_ADDRESS else (
+                            'refund' if address == cart_order['buyer_address'] else 'payment'
+                        )
+                        await conn.execute(
+                            '''
+                            INSERT INTO transaction_entries (
+                                tx_hash, address, entry_type, asset_name,
+                                amount, fee, confirmations, time,
+                                trusted, created_at, updated_at
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, now(), now())
+                            ''',
+                            tx_hash,                    # tx_hash
+                            address,                    # address
+                            payment_type,               # entry_type
+                            'EVR',                      # asset_name
+                            Decimal(str(amount)),       # amount
+                            Decimal('0'),               # fee
+                            0,                          # confirmations
+                            True                        # trusted
+                        )
+
+                # Determine final status
+                if len(failed_transfers) == len(items):
+                    # All transfers failed and refund was successful
+                    status = 'refunded' if total_refund > 0 and payments else 'failed'
+                elif failed_transfers:
+                    # Some transfers failed but some succeeded
+                    status = 'partially_completed'
+                else:
+                    # All transfers succeeded
+                    status = 'completed'
+
+                # Record final payout status and prevent retries
+                await conn.execute(
+                    '''
+                    UPDATE order_payouts
+                    SET 
+                        status = $2,
+                        completed_at = now(),
+                        updated_at = now(),
+                        attempts = $3,  -- Set to max attempts to prevent retries
+                        tx_hash = $4
+                    WHERE cart_order_id = $1
+                    ''',
+                    cart_order_id,
+                    status,
+                    MAX_PAYOUT_ATTEMPTS,
+                    tx_hash if payments else None
+                )
+                
+                # Update cart order status
+                await conn.execute(
+                    '''
+                    UPDATE cart_orders 
+                    SET 
+                        status = $2,
+                        updated_at = now()
+                    WHERE id = $1
+                    ''',
+                    cart_order_id,
+                    status
+                )
+
+                # Record any failed transfers for tracking
+                for item, error in failed_transfers:
                     await conn.execute(
                         '''
-                        INSERT INTO transaction_entries (
-                            tx_hash, address, entry_type, asset_name,
-                            amount, fee, confirmations, time,
-                            trusted, created_at, updated_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+                        INSERT INTO failed_transfers (
+                            cart_order_id,
+                            asset_name,
+                            amount,
+                            from_address,
+                            to_address,
+                            error,
+                            created_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, now())
                         ''',
-                        tx_hash,                    # tx_hash
-                        address,                    # address
-                        'send',                     # entry_type
-                        'EVR',                      # asset_name
-                        Decimal(str(amount)),       # amount
-                        Decimal('0'),               # fee
-                        0,                          # confirmations
-                        datetime.now(timezone.utc), # time
-                        True                        # trusted
+                        cart_order_id,
+                        item['asset_name'],
+                        item['amount'],
+                        item['deposit_address'],
+                        cart_order['buyer_address'],
+                        error
                     )
-                    
+
+                logger.info(
+                    f"Completed payout for cart order {cart_order_id} - "
+                    f"Status: {status}, "
+                    f"Successful: {len(successful_transfers)}, "
+                    f"Failed: {len(failed_transfers)}, "
+                    f"Total seller payments: {sum(seller_payments.values())}, "
+                    f"Total fees: {total_fees}, "
+                    f"Total refunds: {total_refund}"
+                )
+
             except Exception as e:
-                logger.error(f"Failed to send EVR payments: {e}")
-                raise PayoutError(f"Failed to send EVR payments: {str(e)}")
+                logger.error(f"Failed to process EVR payments: {e}")
+                # Mark payout and order as permanently failed
+                await conn.execute(
+                    '''
+                    UPDATE order_payouts
+                    SET 
+                        status = 'failed',
+                        error = $2,
+                        updated_at = now(),
+                        attempts = $3  -- Set attempts to max to prevent retries
+                    WHERE cart_order_id = $1
+                    ''',
+                    cart_order_id,
+                    str(e),
+                    MAX_PAYOUT_ATTEMPTS
+                )
+                
+                # Update cart order status to failed
+                await conn.execute(
+                    '''
+                    UPDATE cart_orders 
+                    SET 
+                        status = 'failed',
+                        updated_at = now()
+                    WHERE id = $1
+                    ''',
+                    cart_order_id
+                )
+                raise PayoutError(f"Failed to process EVR payments: {str(e)}")
             
-            # Record successful payout
+        except Exception as e:
+            logger.error(f"Error processing payout for cart order {cart_order_id}: {e}")
+            # Ensure order is marked as failed and won't be retried
             await conn.execute(
                 '''
-                INSERT INTO order_payouts (
-                    cart_order_id, 
-                    status,
-                    amount,
-                    asset_name,
-                    to_address,
-                    tx_hash,
-                    completed_at
-                ) VALUES ($1, 'completed', $2, 'EVR', $3, $4, now())
-                ON CONFLICT (cart_order_id) DO UPDATE
+                UPDATE order_payouts
                 SET 
-                    status = 'completed',
-                    amount = EXCLUDED.amount,
-                    tx_hash = EXCLUDED.tx_hash,
-                    completed_at = EXCLUDED.completed_at,
-                    updated_at = now()
+                    status = 'failed',
+                    error = $2,
+                    updated_at = now(),
+                    attempts = $3  -- Set attempts to max to prevent retries
+                WHERE cart_order_id = $1
                 ''',
                 cart_order_id,
-                total_fees,
-                DEFAULT_FEE_ADDRESS,
-                tx_hash
+                str(e),
+                MAX_PAYOUT_ATTEMPTS
             )
             
-            # Update cart order status
+            # Update cart order status to failed
             await conn.execute(
                 '''
                 UPDATE cart_orders 
                 SET 
-                    status = 'completed',
+                    status = 'failed',
                     updated_at = now()
                 WHERE id = $1
                 ''',
                 cart_order_id
             )
-            
-            # Let the blockchain monitor handle balance updates
-            # Wait a moment for the transaction to be seen
-            await asyncio.sleep(2)
-            
-            logger.info(f"Successfully processed payout for cart order {cart_order_id}")
-            
-        except Exception as e:
-            logger.error(f"Error processing payout for cart order {cart_order_id}: {e}")
             raise PayoutError(f"Payout failed: {str(e)}")
-            
+
     async def _update_cart_order_payout_failure(self, cart_order_id: UUID):
         """Update failure count for a cart order payout.
         

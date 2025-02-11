@@ -423,6 +423,7 @@ schema = {
                 {'name': 'error', 'type': 'TEXT', 'nullable': True},
                 {'name': 'attempts', 'type': 'INT8', 'default': '0'},
                 {'name': 'last_attempt', 'type': 'TIMESTAMP', 'nullable': True},
+                {'name': 'completed_at', 'type': 'TIMESTAMP', 'nullable': True},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
                 {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
             ],
@@ -432,12 +433,39 @@ schema = {
             ],
             'indexes': [
                 {'name': 'idx_payouts_order', 'columns': ['order_id']},
-                {'name': 'idx_payouts_cart_order', 'columns': ['cart_order_id']},
+                {'name': 'idx_payouts_cart_order', 'columns': ['cart_order_id'], 'unique': True},
                 {'name': 'idx_payouts_status', 'columns': ['status']},
                 {'name': 'idx_payouts_tx', 'columns': ['tx_hash']}
             ],
             'checks': [
-                {'name': 'valid_order_reference', 'expression': "(order_id IS NOT NULL AND cart_order_id IS NULL) OR (cart_order_id IS NOT NULL AND order_id IS NULL)"}
+                {'name': 'valid_order_reference', 'expression': "(order_id IS NOT NULL AND cart_order_id IS NULL) OR (cart_order_id IS NOT NULL AND order_id IS NULL)"},
+                {'name': 'valid_payout_status', 'expression': "status IN ('pending', 'processing', 'completed', 'partially_completed', 'failed')"}
+            ]
+        },
+        {
+            'name': 'failed_transfers',
+            'columns': [
+                {'name': 'id', 'type': 'UUID', 'primary_key': True, 'default': 'gen_random_uuid()'},
+                {'name': 'cart_order_id', 'type': 'UUID', 'nullable': False},
+                {'name': 'asset_name', 'type': 'TEXT', 'nullable': False},
+                {'name': 'amount', 'type': 'DECIMAL', 'nullable': False},
+                {'name': 'from_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'to_address', 'type': 'TEXT', 'nullable': False},
+                {'name': 'error', 'type': 'TEXT', 'nullable': False},
+                {'name': 'retry_count', 'type': 'INT8', 'default': '0'},
+                {'name': 'last_retry', 'type': 'TIMESTAMP', 'nullable': True},
+                {'name': 'resolved', 'type': 'BOOLEAN', 'default': 'false'},
+                {'name': 'resolved_at', 'type': 'TIMESTAMP', 'nullable': True},
+                {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'},
+                {'name': 'updated_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
+            ],
+            'foreign_keys': [
+                {'columns': ['cart_order_id'], 'references': 'cart_orders(id)'}
+            ],
+            'indexes': [
+                {'name': 'idx_failed_transfers_cart_order', 'columns': ['cart_order_id']},
+                {'name': 'idx_failed_transfers_resolved', 'columns': ['resolved']},
+                {'name': 'idx_failed_transfers_created', 'columns': ['created_at']}
             ]
         },
         {
