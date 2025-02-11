@@ -74,7 +74,6 @@ async def lifespan(app: FastAPI):
         await expiration_task
     except asyncio.CancelledError:
         pass
-    # Don't close DB here since it's handled in __main__.py
 
 # Create FastAPI app
 app = FastAPI(
@@ -116,26 +115,31 @@ async def root():
             detail=f"Error reading documentation: {str(e)}"
         )
 
-# Import and include all routers
+# Import all routers
+from .auth import router as auth_router
 from .listings import router as listings_router
 from .orders import router as orders_router
 from .websockets import router as websocket_router
 from .market import router as market_router
 from .system import router as system_router
 from .notifications import router as notifications_router
-from .auth import router as auth_router
 from .profile import router as profile_router
 from .chat import router as chat_router
 from .listings.featured import router as featured_router
 
-# Include all routers
+# Include routers in specific order to avoid conflicts
+# Auth should be first since it's needed by other routers
+app.include_router(auth_router)
+
+# Core functionality routers
+app.include_router(orders_router)  # Orders before listings to ensure /orders/create/{listing_id} takes precedence
 app.include_router(listings_router)
-app.include_router(orders_router)
-app.include_router(websocket_router)
+app.include_router(featured_router)
+
+# Supporting functionality routers
+app.include_router(profile_router)
 app.include_router(market_router)
+app.include_router(chat_router)
+app.include_router(websocket_router)
 app.include_router(system_router)
 app.include_router(notifications_router)
-app.include_router(auth_router)
-app.include_router(profile_router)
-app.include_router(chat_router)
-app.include_router(featured_router)

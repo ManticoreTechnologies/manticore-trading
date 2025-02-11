@@ -1,0 +1,164 @@
+:root {
+    --primary-color: #2c3e50;
+    --secondary-color: #34495e;
+    --accent-color: #3498db;
+    --success-color: #2ecc71;
+    --warning-color: #f1c40f;
+    --error-color: #e74c3c;
+    --text-color: #2c3e50;
+    --light-bg: #f8f9fa;
+    --websocket-color: #9b59b6;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: var(--text-color);
+    background-color: var(--light-bg);
+}
+
+.navbar {
+    background-color: var(--primary-color);
+    padding: 1rem;
+}
+
+.navbar-brand {
+    color: white !important;
+    font-weight: bold;
+}
+
+.nav-link {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.nav-link:hover {
+    color: white !important;
+}
+
+.endpoint {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.endpoint h3 {
+    color: var(--primary-color);
+    margin-bottom: 15px;
+}
+
+.method {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: white;
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+.method.get { background-color: var(--accent-color); }
+.method.post { background-color: var(--success-color); }
+.method.put, .method.patch { background-color: var(--warning-color); }
+.method.delete { background-color: var(--error-color); }
+.method.websocket { background-color: var(--websocket-color); }
+
+.path {
+    font-family: monospace;
+    background-color: var(--light-bg);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.params table {
+    width: 100%;
+    margin: 15px 0;
+}
+
+.params th {
+    background-color: var(--light-bg);
+    padding: 8px;
+}
+
+.response-example {
+    background-color: var(--light-bg);
+    padding: 15px;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.copy-btn {
+    float: right;
+    padding: 4px 8px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.copy-btn:hover {
+    background-color: #2980b9;
+}
+
+.required {
+    color: var(--error-color);
+    font-weight: bold;
+}
+
+.optional {
+    color: var(--accent-color);
+}
+
+.description {
+    margin: 10px 0;
+    color: var(--secondary-color);
+}
+
+.auth-required {
+    color: var(--warning-color);
+    font-weight: bold;
+}
+
+.endpoint-url {
+    font-family: monospace;
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.curl-example {
+    background-color: #2c3e50;
+    color: white;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow-x: auto;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --primary-color: #34495e;
+        --secondary-color: #7f8c8d;
+        --text-color: #ecf0f1;
+        --light-bg: #2c3e50;
+    }
+
+    body {
+        background-color: #1a1a1a;
+    }
+
+    .endpoint {
+        background: #2c3e50;
+    }
+
+    .params th {
+        background-color: #34495e;
+    }
+
+    .curl-example {
+        background-color: #1a1a1a;
+    }
+} 

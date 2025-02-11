@@ -23,7 +23,7 @@ class DisputeRequest(BaseModel):
     description: str
     evidence: Optional[List[str]] = None  # List of evidence URLs/hashes
 
-@router.post("/orders/{order_id}/cancel")
+@router.post("/{order_id}/cancel")
 async def cancel_order(order_id: str):
     """Cancel an unfulfilled order.
     
@@ -34,6 +34,8 @@ async def cancel_order(order_id: str):
         Dict containing updated order status
     """
     try:
+        # Convert string to UUID
+        order_uuid = UUID(order_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             # Verify order exists and can be cancelled
@@ -43,7 +45,7 @@ async def cancel_order(order_id: str):
                 FROM orders
                 WHERE id = $1 AND status IN ('pending', 'partially_paid')
                 ''',
-                order_id
+                order_uuid
             )
             
             if not order:
@@ -60,7 +62,7 @@ async def cancel_order(order_id: str):
                     updated_at = now()
                 WHERE id = $1
                 ''',
-                order_id
+                order_uuid
             )
             
             # Record in history
@@ -73,18 +75,23 @@ async def cancel_order(order_id: str):
                     details
                 ) VALUES ($1, $2, $3, $4)
                 ''',
-                order_id,
+                order_uuid,
                 'cancelled',
                 'Order cancelled by user',
                 {'cancelled_at': datetime.utcnow().isoformat()}
             )
             
             return {
-                "order_id": order_id,
+                "order_id": str(order_uuid),
                 "status": "cancelled",
                 "cancelled_at": datetime.utcnow().isoformat()
             }
             
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid order ID format: {order_id}"
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -93,7 +100,7 @@ async def cancel_order(order_id: str):
             detail=str(e)
         )
 
-@router.get("/orders/{order_id}/history")
+@router.get("/{order_id}/history")
 async def get_order_history(order_id: str) -> List[OrderHistoryEntry]:
     """Get detailed order history including status changes.
     
@@ -104,12 +111,14 @@ async def get_order_history(order_id: str) -> List[OrderHistoryEntry]:
         List of order history entries
     """
     try:
+        # Convert string to UUID
+        order_uuid = UUID(order_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             # Verify order exists
             exists = await conn.fetchval(
                 'SELECT EXISTS(SELECT 1 FROM orders WHERE id = $1)',
-                order_id
+                order_uuid
             )
             if not exists:
                 raise HTTPException(
@@ -129,7 +138,7 @@ async def get_order_history(order_id: str) -> List[OrderHistoryEntry]:
                 WHERE order_id = $1
                 ORDER BY created_at DESC
                 ''',
-                order_id
+                order_uuid
             )
             
             return [
@@ -142,6 +151,11 @@ async def get_order_history(order_id: str) -> List[OrderHistoryEntry]:
                 for entry in entries
             ]
             
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid order ID format: {order_id}"
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -150,7 +164,7 @@ async def get_order_history(order_id: str) -> List[OrderHistoryEntry]:
             detail=str(e)
         )
 
-@router.post("/orders/{order_id}/dispute")
+@router.post("/{order_id}/dispute")
 async def open_dispute(order_id: str, dispute: DisputeRequest):
     """Open a dispute for an order.
     
@@ -162,6 +176,8 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
         Dict containing dispute details
     """
     try:
+        # Convert string to UUID
+        order_uuid = UUID(order_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             # Verify order exists and can be disputed
@@ -171,7 +187,7 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
                 FROM orders
                 WHERE id = $1 AND status NOT IN ('pending', 'cancelled')
                 ''',
-                order_id
+                order_uuid
             )
             
             if not order:
@@ -187,7 +203,7 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
                 FROM order_disputes
                 WHERE order_id = $1 AND status != 'closed'
                 ''',
-                order_id
+                order_uuid
             )
             
             if existing_dispute:
@@ -208,7 +224,7 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
                 ) VALUES ($1, $2, $3, $4, 'opened')
                 RETURNING id
                 ''',
-                order_id,
+                order_uuid,
                 dispute.reason,
                 dispute.description,
                 dispute.evidence
@@ -224,7 +240,7 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
                     details
                 ) VALUES ($1, $2, $3, $4)
                 ''',
-                order_id,
+                order_uuid,
                 'disputed',
                 'Dispute opened by user',
                 {
@@ -235,7 +251,7 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
             
             return {
                 "dispute_id": str(dispute_id),
-                "order_id": order_id,
+                "order_id": str(order_uuid),
                 "status": "opened",
                 "created_at": datetime.utcnow().isoformat(),
                 "reason": dispute.reason,
@@ -243,6 +259,11 @@ async def open_dispute(order_id: str, dispute: DisputeRequest):
                 "evidence": dispute.evidence
             }
             
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid order ID format: {order_id}"
+        )
     except HTTPException:
         raise
     except Exception as e:

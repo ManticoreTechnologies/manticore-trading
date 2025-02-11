@@ -219,7 +219,7 @@ async def get_tag_listings(
             detail=str(e)
         )
 
-@router.get("/transactions/{address}")
+@router.get("/address/{address}/transactions")
 async def get_address_txns(
     address: str,
     asset_name: Optional[str] = Query(None),
@@ -245,7 +245,7 @@ async def get_address_txns(
             detail=str(e)
         )
 
-@router.get("/{listing_id}/transactions")
+@router.get("/by-id/{listing_id}/transactions")
 async def get_listing_txns(
     listing_id: str,
     asset_name: Optional[str] = Query(None),
