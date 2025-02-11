@@ -226,9 +226,264 @@ app.include_router(router)
         </div>
     </div>
     <div class="endpoint">
+<h3>create_order</h3>
+<span class="method post">POST</span>
+<span class="path">/orders/create/{listing_id}</span>
+<p class="description">Create a new order for a listing.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>listing_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>order_request</td>
+                    <td><code><class 'api.orders.CreateOrderRequest'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/create/{listing_id}</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>create_cart_order</h3>
+<span class="method post">POST</span>
+<span class="path">/orders/cart</span>
+<p class="description">Create a new cart order for multiple listings.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>cart_request</td>
+                    <td><code><class 'api.orders.CartOrderRequest'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/cart</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>get_cart_order</h3>
+<span class="method get">GET</span>
+<span class="path">/orders/cart/{cart_order_id}</span>
+<p class="description">Get cart order details by ID.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>cart_order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/cart/{cart_order_id}</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>get_cart_order_balances</h3>
+<span class="method get">GET</span>
+<span class="path">/orders/cart/{cart_order_id}/balances</span>
+<p class="description">Get cart order payment balances.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>cart_order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/cart/{cart_order_id}/balances</code></pre>
+</div>
+</div>
+<div class="endpoint">
 <h3>cancel_order</h3>
 <span class="method post">POST</span>
-<span class="path">/{order_id}/cancel</span>
+<span class="path">/orders/{order_id}/cancel</span>
+<p class="description">Cancel an order if it's still pending.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>current_user</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/{order_id}/cancel</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>create_dispute</h3>
+<span class="method post">POST</span>
+<span class="path">/orders/{order_id}/dispute</span>
+<p class="description">Create a dispute for an order.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>dispute</td>
+                    <td><code><class 'api.orders.DisputeRequest'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>current_user</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/{order_id}/dispute</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>get_order_balances</h3>
+<span class="method get">GET</span>
+<span class="path">/orders/{order_id}/balances</span>
+<p class="description">Get order payment balances.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/{order_id}/balances</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>get_order</h3>
+<span class="method get">GET</span>
+<span class="path">/orders/{order_id}</span>
+<p class="description">Get order details by ID.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>order_id</td>
+                    <td><code><class 'str'></code></td>
+                    <td><span class='required'>Yes</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/{order_id}</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>search_orders</h3>
+<span class="method get">GET</span>
+<span class="path">/orders/</span>
+<p class="description">Search orders with various filters.</p>
+<h4>Parameters</h4>
+<div class="params">
+<table class="table">
+<thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+                    <td>buyer_address</td>
+                    <td><code>typing.Optional[str]</code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>listing_id</td>
+                    <td><code>typing.Optional[str]</code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>status</td>
+                    <td><code>typing.Optional[str]</code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>per_page</td>
+                    <td><code><class 'int'></code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+<tr>
+                    <td>page</td>
+                    <td><code><class 'int'></code></td>
+                    <td><span class='optional'>No</span></td>
+                    <td></td>
+                </tr>
+</tbody></table></div>
+<h4>Example Request</h4>
+<div class="curl-example">
+<button class="copy-btn">Copy</button>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/</code></pre>
+</div>
+</div>
+<div class="endpoint">
+<h3>cancel_order</h3>
+<span class="method post">POST</span>
+<span class="path">/orders/{order_id}/cancel</span>
 <p class="description">Cancel an unfulfilled order.
 
 Args:
@@ -251,13 +506,13 @@ Returns:
 <h4>Example Request</h4>
 <div class="curl-example">
 <button class="copy-btn">Copy</button>
-<pre><code class="language-bash">curl -X POST http://localhost:8000/{order_id}/cancel</code></pre>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/{order_id}/cancel</code></pre>
 </div>
 </div>
 <div class="endpoint">
 <h3>get_order_history</h3>
 <span class="method get">GET</span>
-<span class="path">/{order_id}/history</span>
+<span class="path">/orders/{order_id}/history</span>
 <p class="description">Get detailed order history including status changes.
 
 Args:
@@ -280,13 +535,13 @@ Returns:
 <h4>Example Request</h4>
 <div class="curl-example">
 <button class="copy-btn">Copy</button>
-<pre><code class="language-bash">curl -X GET http://localhost:8000/{order_id}/history</code></pre>
+<pre><code class="language-bash">curl -X GET http://localhost:8000/orders/{order_id}/history</code></pre>
 </div>
 </div>
 <div class="endpoint">
 <h3>open_dispute</h3>
 <span class="method post">POST</span>
-<span class="path">/{order_id}/dispute</span>
+<span class="path">/orders/{order_id}/dispute</span>
 <p class="description">Open a dispute for an order.
 
 Args:
@@ -316,7 +571,7 @@ Returns:
 <h4>Example Request</h4>
 <div class="curl-example">
 <button class="copy-btn">Copy</button>
-<pre><code class="language-bash">curl -X POST http://localhost:8000/{order_id}/dispute</code></pre>
+<pre><code class="language-bash">curl -X POST http://localhost:8000/orders/{order_id}/dispute</code></pre>
 </div>
 </div>
 

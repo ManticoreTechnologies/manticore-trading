@@ -133,6 +133,66 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
+                # Update confirmed balances for orders
+                await conn.execute(
+                    '''
+                    WITH confirmed_txs AS (
+                        SELECT 
+                            o.id as order_id,
+                            te.asset_name,
+                            SUM(te.amount) as total_amount,
+                            MAX(te.tx_hash) as last_tx_hash,
+                            MAX(te.time) as last_tx_time
+                        FROM transaction_entries te
+                        JOIN orders o ON o.payment_address = te.address
+                        WHERE te.entry_type = 'receive' 
+                        AND te.abandoned = false
+                        AND te.confirmations >= $1
+                        GROUP BY o.id, te.asset_name
+                    )
+                    UPDATE order_balances ob
+                    SET 
+                        confirmed_balance = ct.total_amount,
+                        last_confirmed_tx_hash = ct.last_tx_hash,
+                        last_confirmed_tx_time = ct.last_tx_time,
+                        updated_at = now()
+                    FROM confirmed_txs ct
+                    WHERE ob.order_id = ct.order_id
+                    AND ob.asset_name = ct.asset_name
+                    ''', 
+                    self.min_confirmations
+                )
+
+                # Update confirmed balances for cart orders
+                await conn.execute(
+                    '''
+                    WITH confirmed_txs AS (
+                        SELECT 
+                            co.id as cart_order_id,
+                            te.asset_name,
+                            SUM(te.amount) as total_amount,
+                            MAX(te.tx_hash) as last_tx_hash,
+                            MAX(te.time) as last_tx_time
+                        FROM transaction_entries te
+                        JOIN cart_orders co ON co.payment_address = te.address
+                        WHERE te.entry_type = 'receive' 
+                        AND te.abandoned = false
+                        AND te.confirmations >= $1
+                        GROUP BY co.id, te.asset_name
+                    )
+                    UPDATE cart_order_balances cob
+                    SET 
+                        confirmed_balance = ct.total_amount,
+                        last_confirmed_tx_hash = ct.last_tx_hash,
+                        last_confirmed_tx_time = ct.last_tx_time,
+                        updated_at = now()
+                    FROM confirmed_txs ct
+                    WHERE cob.cart_order_id = ct.cart_order_id
+                    AND cob.asset_name = ct.asset_name
+                    ''', 
+                    self.min_confirmations
+                )
+
                 # Update pending balances for listings
                 await conn.execute(
                     '''
@@ -155,6 +215,58 @@ class TransactionMonitor:
                     FROM pending_txs pt
                     WHERE lb.listing_id = pt.listing_id
                     AND lb.asset_name = pt.asset_name
+                    ''',
+                    self.min_confirmations
+                )
+
+                # Update pending balances for orders
+                await conn.execute(
+                    '''
+                    WITH pending_txs AS (
+                        SELECT 
+                            o.id as order_id,
+                            te.asset_name,
+                            SUM(te.amount) as total_amount
+                        FROM transaction_entries te
+                        JOIN orders o ON o.payment_address = te.address
+                        WHERE te.entry_type = 'receive'
+                        AND te.abandoned = false
+                        AND te.confirmations < $1
+                        GROUP BY o.id, te.asset_name
+                    )
+                    UPDATE order_balances ob
+                    SET 
+                        pending_balance = COALESCE(pt.total_amount, 0),
+                        updated_at = now()
+                    FROM pending_txs pt
+                    WHERE ob.order_id = pt.order_id
+                    AND ob.asset_name = pt.asset_name
+                    ''',
+                    self.min_confirmations
+                )
+
+                # Update pending balances for cart orders
+                await conn.execute(
+                    '''
+                    WITH pending_txs AS (
+                        SELECT 
+                            co.id as cart_order_id,
+                            te.asset_name,
+                            SUM(te.amount) as total_amount
+                        FROM transaction_entries te
+                        JOIN cart_orders co ON co.payment_address = te.address
+                        WHERE te.entry_type = 'receive'
+                        AND te.abandoned = false
+                        AND te.confirmations < $1
+                        GROUP BY co.id, te.asset_name
+                    )
+                    UPDATE cart_order_balances cob
+                    SET 
+                        pending_balance = COALESCE(pt.total_amount, 0),
+                        updated_at = now()
+                    FROM pending_txs pt
+                    WHERE cob.cart_order_id = pt.cart_order_id
+                    AND cob.asset_name = pt.asset_name
                     ''',
                     self.min_confirmations
                 )
@@ -420,7 +532,7 @@ class TransactionMonitor:
 
                             # Immediately update listing balances for this transaction
                             if entry['entry_type'] == 'receive' and not entry['abandoned']:
-                                # Update or create balance entry
+                                # Update or create listing balance entry
                                 await conn.execute(
                                     '''
                                     INSERT INTO listing_balances (
@@ -443,6 +555,72 @@ class TransactionMonitor:
                                             WHEN $3::int < $4::int THEN listing_balances.pending_balance + $2
                                             WHEN $3::int >= $4::int THEN listing_balances.pending_balance - $2
                                             ELSE listing_balances.pending_balance
+                                        END,
+                                        updated_at = now()
+                                    ''',
+                                    entry['asset_name'],
+                                    entry['amount'],
+                                    entry['confirmations'],
+                                    self.min_confirmations,
+                                    entry['address']
+                                )
+
+                                # Also update order balances if this is a payment address
+                                await conn.execute(
+                                    '''
+                                    INSERT INTO order_balances (
+                                        order_id, asset_name, confirmed_balance, pending_balance
+                                    )
+                                    SELECT 
+                                        o.id,
+                                        $1,
+                                        CASE WHEN $3::int >= $4::int THEN $2 ELSE 0 END,
+                                        CASE WHEN $3::int < $4::int THEN $2 ELSE 0 END
+                                    FROM orders o
+                                    WHERE o.payment_address = $5
+                                    ON CONFLICT (order_id, asset_name) DO UPDATE
+                                    SET 
+                                        confirmed_balance = CASE 
+                                            WHEN $3::int >= $4::int THEN order_balances.confirmed_balance + $2
+                                            ELSE order_balances.confirmed_balance
+                                        END,
+                                        pending_balance = CASE 
+                                            WHEN $3::int < $4::int THEN order_balances.pending_balance + $2
+                                            WHEN $3::int >= $4::int THEN order_balances.pending_balance - $2
+                                            ELSE order_balances.pending_balance
+                                        END,
+                                        updated_at = now()
+                                    ''',
+                                    entry['asset_name'],
+                                    entry['amount'],
+                                    entry['confirmations'],
+                                    self.min_confirmations,
+                                    entry['address']
+                                )
+
+                                # And cart order balances
+                                await conn.execute(
+                                    '''
+                                    INSERT INTO cart_order_balances (
+                                        cart_order_id, asset_name, confirmed_balance, pending_balance
+                                    )
+                                    SELECT 
+                                        co.id,
+                                        $1,
+                                        CASE WHEN $3::int >= $4::int THEN $2 ELSE 0 END,
+                                        CASE WHEN $3::int < $4::int THEN $2 ELSE 0 END
+                                    FROM cart_orders co
+                                    WHERE co.payment_address = $5
+                                    ON CONFLICT (cart_order_id, asset_name) DO UPDATE
+                                    SET 
+                                        confirmed_balance = CASE 
+                                            WHEN $3::int >= $4::int THEN cart_order_balances.confirmed_balance + $2
+                                            ELSE cart_order_balances.confirmed_balance
+                                        END,
+                                        pending_balance = CASE 
+                                            WHEN $3::int < $4::int THEN cart_order_balances.pending_balance + $2
+                                            WHEN $3::int >= $4::int THEN cart_order_balances.pending_balance - $2
+                                            ELSE cart_order_balances.pending_balance
                                         END,
                                         updated_at = now()
                                     ''',

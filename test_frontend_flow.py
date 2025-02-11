@@ -404,29 +404,30 @@ class FrontendClientTest:
             logger.info("Buyer authentication successful")
             
             # Create order
+            logger.info("Creating cart order with items:")
+            logger.info(f"- CREDITS: 1.0 from listing {self.listing_id}")
+            
             order_resp = self.run_cmd(f'''
-                curl -s -L -X POST {self.api_url}/orders/create/{self.listing_id} \\
+                curl -s -X POST "{self.api_url}/orders/cart" \\
                     -H "Content-Type: application/json" \\
                     -H "Authorization: Bearer {buyer_token}" \\
-                    -d '{{
-                        "buyer_address": "{self.buyer_address}",
-                        "items": [
-                            {{"asset_name": "CREDITS", "amount": 1.0}}
-                        ]
-                    }}'
+                    -d '{{"buyer_address": "{self.buyer_address}", "items": [{{"listing_id": "{self.listing_id}", "asset_name": "CREDITS", "amount": 1.0}}]}}'
             ''')
             
             if "id" not in order_resp:
+                logger.error(f"Failed to create order. Response: {order_resp}")
                 raise ValueError(f"Invalid order response: {order_resp}")
                 
             self.order_id = order_resp["id"]
             logger.info(f"Order created successfully with ID: {self.order_id}")
+            logger.info(f"Order details: {json.dumps(order_resp, indent=2)}")
             
             # Send payment
             payment_amount = Decimal(str(order_resp["total_payment_evr"]))
             payment_address = order_resp["payment_address"]
             
-            logger.info(f"Sending {payment_amount} EVR to {payment_address}")
+            logger.info(f"Payment required: {payment_amount} EVR")
+            logger.info(f"Payment address: {payment_address}")
             
             # Send EVR payment
             tx_hash = self.run_cmd(f'''
@@ -444,22 +445,40 @@ class FrontendClientTest:
                 if time.time() - start_time > max_wait:
                     raise TimeoutError("Order processing timed out")
                     
+                # Get order status
                 order_status = self.run_cmd(f'''
-                    curl -s -X GET {self.api_url}/orders/{self.order_id}
+                    curl -s -X GET "{self.api_url}/orders/cart/{self.order_id}"
                 ''')
                 
                 status = order_status.get("status")
                 logger.info(f"Order status: {status}")
                 
+                # Get payment balances
+                balances = self.run_cmd(f'''
+                    curl -s -X GET "{self.api_url}/orders/cart/{self.order_id}/balances"
+                ''')
+                
+                if balances:
+                    logger.info("Payment balances:")
+                    for asset, balance in balances.items():
+                        logger.info(f"  {asset}:")
+                        logger.info(f"    Confirmed: {balance.get('confirmed_balance', '0')}")
+                        logger.info(f"    Pending: {balance.get('pending_balance', '0')}")
+                        if 'required_amount' in balance:
+                            logger.info(f"    Required: {balance.get('required_amount')}")
+                
                 if status == "completed":
                     logger.info("Order completed successfully")
+                    logger.info(f"Final order details: {json.dumps(order_status, indent=2)}")
                     break
                 elif status == "failed":
+                    logger.error(f"Order failed. Details: {json.dumps(order_status, indent=2)}")
                     raise ValueError("Order processing failed")
                     
                 await asyncio.sleep(10)  # Check every 10 seconds
             
             # Verify balances after order
+            logger.info("Verifying final listing balances...")
             listing_data = self.run_cmd(f'''
                 curl -s -X GET {self.api_url}/listings/by-id/{self.listing_id} \\
                     -H "Authorization: Bearer {self.auth_token}"
@@ -469,9 +488,12 @@ class FrontendClientTest:
             for balance in listing_data.get("balances", []):
                 if balance["asset_name"] == "CREDITS":
                     confirmed = Decimal(balance["confirmed_balance"])
-                    logger.info(f"Final CREDITS balance: {confirmed}")
+                    pending = Decimal(balance["pending_balance"])
+                    logger.info(f"Final listing CREDITS balance:")
+                    logger.info(f"  Confirmed: {confirmed}")
+                    logger.info(f"  Pending: {pending}")
                     if confirmed != Decimal("1.0"):  # Should be 2.0 - 1.0 from order
-                        raise ValueError(f"Unexpected final balance: {confirmed}")
+                        raise ValueError(f"Unexpected final balance: {confirmed} (expected 1.0)")
                     break
                     
         except Exception as e:

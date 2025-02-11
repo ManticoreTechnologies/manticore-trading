@@ -7,7 +7,10 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel
 from database import get_pool
-from orders import OrderManager, OrderError
+from orders import (
+    OrderManager, OrderError, InsufficientBalanceError,
+    ListingNotFoundError, AssetNotFoundError
+)
 from auth import get_current_user
 
 # Create router
@@ -26,10 +29,16 @@ class CreateOrderRequest(BaseModel):
     buyer_address: str
     items: List[OrderItem]
 
+class CartOrderItem(BaseModel):
+    """Request model for cart order items."""
+    listing_id: UUID
+    asset_name: str
+    amount: Decimal
+
 class CartOrderRequest(BaseModel):
     """Request model for creating a cart order."""
     buyer_address: str
-    items: List[dict]  # List of {listing_id, asset_name, amount}
+    items: List[CartOrderItem]
 
 class DisputeRequest(BaseModel):
     """Request model for creating a dispute."""
@@ -75,21 +84,30 @@ async def create_order(listing_id: str, order_request: CreateOrderRequest):
             detail=str(e)
         )
 
-# Cart-specific endpoints (also specific)
+# Cart-specific endpoints first (most specific)
 @router.post("/cart", tags=["Order Creation"])
 async def create_cart_order(cart_request: CartOrderRequest):
     """Create a new cart order for multiple listings."""
     try:
         return await OrderManager().create_cart_order(
             buyer_address=cart_request.buyer_address,
-            items=cart_request.items
+            items=[{
+                "listing_id": str(item.listing_id),
+                "asset_name": item.asset_name,
+                "amount": item.amount
+            } for item in cart_request.items]
         )
-    except OrderError.ListingNotFoundError as e:
+    except ListingNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
-    except OrderError.InsufficientBalanceError as e:
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except AssetNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
@@ -100,6 +118,7 @@ async def create_cart_order(cart_request: CartOrderRequest):
             detail=str(e)
         )
     except Exception as e:
+        logger.error(f"Error creating cart order: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
@@ -339,7 +358,10 @@ async def search_orders(
         )
 
 # Import management endpoints
-from .management import *
+from .management import router as management_router
+
+# Include management router
+router.include_router(management_router)
 
 # Export the router
 __all__ = ['router'] 

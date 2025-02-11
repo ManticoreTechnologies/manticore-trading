@@ -163,8 +163,7 @@ schema = {
                 {'name': 'asset_name', 'type': 'TEXT'},
                 {'name': 'amount', 'type': 'DECIMAL'},
                 {'name': 'price_evr', 'type': 'DECIMAL'},
-                {'name': 'price_asset_name', 'type': 'TEXT'},
-                {'name': 'price_asset_amount', 'type': 'DECIMAL'},
+                {'name': 'fee_evr', 'type': 'DECIMAL', 'default': '0'},
                 {'name': 'created_at', 'type': 'TIMESTAMP', 'nullable': False, 'default': 'now()'}
             ],
             'primary_key': ['cart_order_id', 'listing_id', 'asset_name'],
@@ -718,106 +717,7 @@ schema = {
             ]
         }
     ],
-    'functions': [
-        {
-            'name': 'recalculate_listing_balances',
-            'parameters': [
-                {'name': 'p_listing_id', 'type': 'UUID'},
-                {'name': 'p_asset_name', 'type': 'TEXT', 'default': 'NULL'}
-            ],
-            'returns': 'void',
-            'language': 'plpgsql',
-            'body': '''
-                BEGIN
-                    -- Clear existing balances for the listing
-                    IF p_asset_name IS NULL THEN
-                        UPDATE listing_balances
-                        SET 
-                            confirmed_balance = 0,
-                            pending_balance = 0,
-                            last_confirmed_tx_hash = NULL,
-                            last_confirmed_tx_time = NULL,
-                            updated_at = now()
-                        WHERE listing_id = p_listing_id;
-                    ELSE
-                        UPDATE listing_balances
-                        SET 
-                            confirmed_balance = 0,
-                            pending_balance = 0,
-                            last_confirmed_tx_hash = NULL,
-                            last_confirmed_tx_time = NULL,
-                            updated_at = now()
-                        WHERE listing_id = p_listing_id
-                        AND asset_name = p_asset_name;
-                    END IF;
-                    
-                    -- Recalculate confirmed balances
-                    WITH confirmed_txs AS (
-                        SELECT 
-                            te.asset_name,
-                            SUM(CASE WHEN te.entry_type = 'receive' THEN te.amount 
-                                    WHEN te.entry_type = 'withdraw' THEN -te.amount 
-                                    ELSE 0 END) as total_amount,
-                            MAX(CASE WHEN te.entry_type = 'receive' THEN te.tx_hash ELSE NULL END) as last_tx_hash,
-                            MAX(CASE WHEN te.entry_type = 'receive' THEN te.time ELSE NULL END) as last_tx_time
-                        FROM transaction_entries te
-                        JOIN listings l ON l.deposit_address = te.address
-                        WHERE l.id = p_listing_id
-                        AND te.entry_type IN ('receive', 'withdraw')
-                        AND te.abandoned = false
-                        AND te.confirmations >= 6
-                        AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
-                    )
-                    UPDATE listing_balances lb
-                    SET 
-                        confirmed_balance = COALESCE(t.total_amount, 0),
-                        last_confirmed_tx_hash = t.last_tx_hash,
-                        last_confirmed_tx_time = t.last_tx_time,
-                        updated_at = now()
-                    FROM (
-                        SELECT 
-                            asset_name,
-                            SUM(total_amount) as total_amount,
-                            MAX(last_tx_hash) as last_tx_hash,
-                            MAX(last_tx_time) as last_tx_time
-                        FROM confirmed_txs
-                        GROUP BY asset_name
-                    ) t
-                    WHERE lb.listing_id = p_listing_id
-                    AND lb.asset_name = t.asset_name;
-                    
-                    -- Recalculate pending balances
-                    WITH pending_txs AS (
-                        SELECT 
-                            te.asset_name,
-                            SUM(CASE WHEN te.entry_type = 'receive' THEN te.amount 
-                                    WHEN te.entry_type = 'withdraw' THEN -te.amount 
-                                    ELSE 0 END) as total_amount
-                        FROM transaction_entries te
-                        JOIN listings l ON l.deposit_address = te.address
-                        WHERE l.id = p_listing_id
-                        AND te.entry_type IN ('receive', 'withdraw')
-                        AND te.abandoned = false
-                        AND te.confirmations < 6
-                        AND (p_asset_name IS NULL OR te.asset_name = p_asset_name)
-                    )
-                    UPDATE listing_balances lb
-                    SET 
-                        pending_balance = COALESCE(t.total_amount, 0),
-                        updated_at = now()
-                    FROM (
-                        SELECT 
-                            asset_name,
-                            SUM(total_amount) as total_amount
-                        FROM pending_txs
-                        GROUP BY asset_name
-                    ) t
-                    WHERE lb.listing_id = p_listing_id
-                    AND lb.asset_name = t.asset_name;
-                END;
-            '''
-        }
-    ],
+    
     'triggers': [
         {
             'name': 'record_order_history_trigger',
