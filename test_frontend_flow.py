@@ -74,12 +74,60 @@ class FrontendClientTest:
         """Initialize test environment."""
         logger.info("Setting up test environment...")
         
-        # Always generate new addresses for a fresh test
-        self.seller_address = self.run_cmd("evrmore-cli getnewaddress")["output"]
+        # Generate buyer address - we always need a new one
         self.buyer_address = self.run_cmd("evrmore-cli getnewaddress")["output"]
+        logger.info(f"Generated new buyer address: {self.buyer_address}")
         
+        # Try to load existing listing data
+        try:
+            if os.path.exists(self.listing_file):
+                with open(self.listing_file, 'r') as f:
+                    data = json.load(f)
+                    self.listing_id = data.get('listing_id')
+                    self.seller_address = data.get('seller_address')
+                    self.deposit_address = data.get('deposit_address')
+                    
+                    if all([self.listing_id, self.seller_address, self.deposit_address]):
+                        logger.info(f"Loaded existing listing data:")
+                        logger.info(f"  Listing ID: {self.listing_id}")
+                        logger.info(f"  Seller Address: {self.seller_address}")
+                        logger.info(f"  Deposit Address: {self.deposit_address}")
+                        
+                        # Verify the listing exists and has sufficient balance
+                        try:
+                            listing_data = self.run_cmd(f'''
+                                curl -s -X GET {self.api_url}/listings/by-id/{self.listing_id}
+                            ''')
+                            
+                            if listing_data.get("id") == self.listing_id:
+                                # Check if listing has sufficient balance
+                                for balance in listing_data.get("balances", []):
+                                    if balance["asset_name"] == "CREDITS":
+                                        confirmed = float(balance["confirmed_balance"])
+                                        pending = float(balance["pending_balance"])
+                                        if confirmed >= 2.0:
+                                            logger.info("Found existing listing with sufficient balance")
+                                            return
+                                        else:
+                                            logger.info(f"Existing listing found but insufficient balance (confirmed: {confirmed}, pending: {pending})")
+                                            self.listing_id = None  # Reset so we create new listing
+                                            break
+                            else:
+                                logger.info("Saved listing ID not found in API")
+                                self.listing_id = None
+                        except Exception as e:
+                            logger.info(f"Could not verify existing listing: {e}")
+                            self.listing_id = None
+        except Exception as e:
+            logger.info(f"No valid listing data found: {e}")
+            self.listing_id = None
+        
+        # If we get here, we need to create a new listing
+        logger.info("Will create new listing with fresh addresses...")
+        
+        # Generate seller address for new listing
+        self.seller_address = self.run_cmd("evrmore-cli getnewaddress")["output"]
         logger.info(f"Generated seller address: {self.seller_address}")
-        logger.info(f"Generated buyer address: {self.buyer_address}")
         
         # Remove old listing file if it exists
         if os.path.exists(self.listing_file):
@@ -474,8 +522,15 @@ class FrontendClientTest:
             
             # Run test flow
             await self.authenticate()
-            await self.create_listing()
-            await self.fund_listing()
+            
+            # Only create and fund listing if we don't have a valid saved one
+            if not self.listing_id:
+                logger.info("No valid saved listing found, creating new one...")
+                await self.create_listing()
+                await self.fund_listing()
+            else:
+                logger.info(f"Using existing listing {self.listing_id}")
+            
             await self.update_listing()
             await self.manage_listing_status()
             await self.create_order()

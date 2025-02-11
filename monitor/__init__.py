@@ -441,6 +441,7 @@ class TransactionMonitor:
                                         END,
                                         pending_balance = CASE 
                                             WHEN $3::int < $4::int THEN listing_balances.pending_balance + $2
+                                            WHEN $3::int >= $4::int THEN listing_balances.pending_balance - $2
                                             ELSE listing_balances.pending_balance
                                         END,
                                         updated_at = now()
