@@ -1,105 +1,142 @@
+"""Test script to demonstrate WebSocket chat functionality."""
+
 import asyncio
-import websockets
 import json
-import requests
-from datetime import datetime
-from uuid import uuid4
-from rpc import getnewaddress, signmessage
+import logging
+import websockets
+from test_profile_flow import ProfileClientTest  # Reuse auth flow
 
-async def get_auth_token():
-    # Get new address
-    address = getnewaddress()
-    print(f"\nGenerated address: {address}")
-    
-    # Get challenge
-    print("\nGetting challenge...")
-    response = requests.post(
-        "http://localhost:8000/auth/challenge",
-        json={"address": address}
-    )
-    if not response.ok:
-        raise Exception(f"Failed to get challenge: {response.text}")
-    
-    challenge_data = response.json()
-    challenge_id = challenge_data["challenge_id"]
-    message = challenge_data["message"]
-    print(f"Challenge received: {message}")
-    
-    # Sign message
-    print("\nSigning message...")
-    signature = signmessage(address, message)
-    print(f"Signature: {signature}")
-    
-    # Verify and get token
-    print("\nGetting JWT token...")
-    response = requests.post(
-        "http://localhost:8000/auth/login",
-        json={
-            "challenge_id": challenge_id,
-            "address": address,
-            "signature": signature
-        }
-    )
-    if not response.ok:
-        raise Exception(f"Failed to get token: {response.text}")
-    
-    token = response.json()["token"]
-    print("Successfully got JWT token")
-    
-    return address, token
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-async def test_chat():
-    # Get authentication token
-    address, token = await get_auth_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    base_url = "http://localhost:8000"
-
-    # Test global chat messages
-    print("\nTesting GET /chat/global")
-    response = requests.get(f"{base_url}/chat/global", headers=headers)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {response.json() if response.ok else response.text}")
-
-    # Test sending a global message
-    print("\nTesting POST /chat/global")
-    message_data = {
-        "text": "Test message from " + address[:8],
-        "ipfs_hash": None
-    }
-    response = requests.post(f"{base_url}/chat/global", headers=headers, json=message_data)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {response.json() if response.ok else response.text}")
-
-    # Test WebSocket connection
-    print("\nTesting WebSocket connection")
-    uri = f"ws://localhost:8000/chat/ws"
-    async with websockets.connect(uri) as websocket:
-        # Send auth message
-        await websocket.send(json.dumps({
-            "token": token
+class ChatClientTest:
+    """Test harness for WebSocket chat functionality."""
+    
+    def __init__(self):
+        self.api_url = "ws://localhost:8000/chat/ws"
+        self.auth_token = None
+        self.websocket = None
+        
+    async def connect(self):
+        """Connect to WebSocket and authenticate."""
+        logger.info("Connecting to WebSocket...")
+        
+        # First get auth token using profile test flow
+        profile_test = ProfileClientTest()
+        await profile_test.setup()
+        self.auth_token = await profile_test.authenticate()
+        
+        # Connect to WebSocket
+        self.websocket = await websockets.connect(self.api_url)
+        
+        # Send authentication message
+        await self.websocket.send(json.dumps({
+            "token": self.auth_token
         }))
-        print("Sent auth message")
-
+        
         # Wait for connection confirmation
-        response = await websocket.recv()
-        print(f"Received: {response}")
-
-        # Send a test message
-        await websocket.send(json.dumps({
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        
+        if data.get("type") == "connection_status" and data.get("data", {}).get("status") == "connected":
+            logger.info("Successfully connected and authenticated")
+        else:
+            raise ValueError(f"Failed to authenticate: {data}")
+            
+    async def send_message(self, text: str, channel: str = "global"):
+        """Send a chat message."""
+        await self.websocket.send(json.dumps({
             "type": "chat_message",
             "data": {
-                "text": f"Test WebSocket message from {address[:8]}",
-                "type": "global"
+                "text": text,
+                "type": "global",
+                "channel": channel
             }
         }))
-        print("Sent test message")
-
-        # Wait for response
+        
+        # Wait for confirmation
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        logger.info(f"Message response: {data}")
+        
+    async def subscribe_to_channel(self, channel: str):
+        """Subscribe to a chat channel."""
+        await self.websocket.send(json.dumps({
+            "type": "subscribe",
+            "data": {
+                "channel": channel
+            }
+        }))
+        
+        # Wait for subscription confirmation
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        logger.info(f"Subscription response: {data}")
+        
+    async def update_presence(self, status: str):
+        """Update presence status."""
+        await self.websocket.send(json.dumps({
+            "type": "presence",
+            "data": {
+                "status": status
+            }
+        }))
+        
+    async def listen_for_messages(self, timeout: int = 30):
+        """Listen for incoming messages for a specified duration."""
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-            print(f"Received: {response}")
+            while True:
+                response = await asyncio.wait_for(self.websocket.recv(), timeout)
+                data = json.loads(response)
+                logger.info(f"Received message: {data}")
         except asyncio.TimeoutError:
-            print("No response received within timeout")
+            logger.info("Finished listening for messages")
+        
+    async def run_test(self):
+        """Run a comprehensive chat test."""
+        try:
+            # Connect and authenticate
+            await self.connect()
+            
+            # Subscribe to a test channel
+            await self.subscribe_to_channel("test_channel")
+            
+            # Update presence
+            await self.update_presence("online")
+            
+            # Send a test message
+            await self.send_message("Hello from test client!")
+            
+            # Listen for any responses
+            await self.listen_for_messages(timeout=10)
+            
+            # Update presence before disconnecting
+            await self.update_presence("offline")
+            
+            # Clean up
+            if self.websocket:
+                await self.websocket.close()
+            
+            logger.info("Chat test completed successfully!")
+            
+        except Exception as e:
+            logger.error(f"Test failed: {e}")
+            raise
+        finally:
+            if self.websocket and not self.websocket.closed:
+                await self.websocket.close()
 
 if __name__ == "__main__":
-    asyncio.run(test_chat()) 
+    # Run the test
+    test = ChatClientTest()
+    try:
+        asyncio.run(test.run_test())
+    except KeyboardInterrupt:
+        logger.info("Test interrupted by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        raise 
