@@ -46,6 +46,8 @@ def _get_connection_kwargs(db_url: str) -> Dict[str, Any]:
         'server_settings': {
             'multiple_active_portals_enabled': 'true',
             'statement_timeout': '300000',  # 5 minutes
+            'idle_in_transaction_session_timeout': '300000',  # 5 minutes
+            'default_transaction_isolation': 'serializable'
         }
     }
     
@@ -106,22 +108,26 @@ async def create_database_if_not_exists(db_url: str) -> None:
         logger.error(f"Error creating database: {e}")
         raise
 
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Initialize a new database connection.
+    
+    Args:
+        conn: The connection to initialize
+    """
+    await conn.execute('''
+        SET multiple_active_portals_enabled = true;
+        SET statement_timeout = '300000';
+        SET idle_in_transaction_session_timeout = '300000';
+        SET default_transaction_isolation = 'serializable';
+    ''')
+
 @backoff.on_exception(
     backoff.expo,
     (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.CannotConnectNowError),
     max_tries=5
 )
 async def init_db(db_url: Optional[str] = None, force_recreate: bool = False) -> None:
-    """Initialize the database connection pool and schema.
-    
-    Args:
-        db_url: Optional database URL. If not provided, will use settings.
-        force_recreate: If True, drop and recreate all tables
-        
-    Raises:
-        ValueError: If database URL is not provided
-        Exception: If initialization fails after retries
-    """
+    """Initialize the database connection pool and schema."""
     global _pool, _schema_manager
     
     try:
@@ -142,63 +148,17 @@ async def init_db(db_url: Optional[str] = None, force_recreate: bool = False) ->
         # Create connection pool with optimized settings for CockroachDB
         _pool = await asyncpg.create_pool(
             url,
-            min_size=2,          # Minimum idle connections
-            max_size=20,         # Maximum connections
-            max_queries=10000,   # Reset connection after this many queries
-            max_inactive_connection_lifetime=300.0,  # 5 minutes
+            min_size=5,           # Increased minimum connections
+            max_size=20,          # Maximum connections
+            max_queries=5000,     # Reduced max queries per connection
+            max_inactive_connection_lifetime=180.0,  # 3 minutes
             command_timeout=60.0,  # 1 minute command timeout
-            init=lambda conn: conn.execute(
-                'SET multiple_active_portals_enabled = true'
-            ),
+            init=_init_connection,
             **conn_kwargs
         )
         
         # Initialize schema manager
         _schema_manager = SchemaManager(_pool)
-        
-        # Check if schema exists
-        async with _pool.acquire() as conn:
-            schema_exists = await conn.fetchval(
-                '''
-                SELECT EXISTS (
-                    SELECT 1 
-                    FROM pg_tables 
-                    WHERE schemaname = 'public' 
-                    AND tablename = 'schema_version'
-                )
-                '''
-            )
-            
-            if not schema_exists or force_recreate:
-                logger.info("Schema not found or force recreate requested. Creating schema...")
-                # Create schema_version table if it doesn't exist
-                await conn.execute('''
-                    CREATE TABLE IF NOT EXISTS schema_version (
-                        version INT NOT NULL DEFAULT 0,
-                        updated_at TIMESTAMP NOT NULL DEFAULT now()
-                    )
-                ''')
-                
-                # Get list of tables to drop
-                tables = await conn.fetch(
-                    '''
-                    SELECT tablename 
-                    FROM pg_tables 
-                    WHERE schemaname = 'public' 
-                    AND tablename != 'schema_version'
-                    '''
-                )
-                
-                # Drop each table individually
-                for table in tables:
-                    await conn.execute(
-                        f'DROP TABLE IF EXISTS "{table["tablename"]}" CASCADE'
-                    )
-                
-                # Reset schema version
-                await conn.execute('DELETE FROM schema_version')
-                await conn.execute('INSERT INTO schema_version (version) VALUES (0)')
-                
         await _schema_manager.initialize()
         
     except Exception as e:

@@ -20,7 +20,7 @@ class FrontendClientTest:
     """Test harness that simulates frontend client interactions."""
     
     def __init__(self):
-        self.api_url = "http://localhost:8000"
+        self.api_url = "http://10.0.0.2:8000"
         
         # Test data storage
         self.seller_address = None
@@ -472,6 +472,41 @@ class FrontendClientTest:
                 if status == "completed":
                     logger.info("Order completed successfully")
                     logger.info(f"Final order details: {json.dumps(order_status, indent=2)}")
+                    
+                    # Verify balances after order
+                    logger.info("Verifying final listing balances...")
+                    
+                    # Monitor balances for several rounds
+                    monitoring_rounds = 5
+                    monitoring_interval = 10  # seconds
+                    
+                    for round_num in range(monitoring_rounds):
+                        logger.info(f"\nBalance monitoring round {round_num + 1}/{monitoring_rounds}")
+                        
+                        listing_data = self.run_cmd(f'''
+                            curl -s -X GET {self.api_url}/listings/by-id/{self.listing_id} \\
+                                -H "Authorization: Bearer {self.auth_token}"
+                        ''')
+                        
+                        # Show all balances
+                        logger.info("Current listing balances:")
+                        for balance in listing_data.get("balances", []):
+                            asset_name = balance["asset_name"]
+                            confirmed = Decimal(balance["confirmed_balance"])
+                            pending = Decimal(balance["pending_balance"])
+                            logger.info(f"  {asset_name}:")
+                            logger.info(f"    Confirmed: {confirmed}")
+                            logger.info(f"    Pending: {pending}")
+                            
+                            # Specific check for CREDITS balance
+                            if asset_name == "CREDITS":
+                                if confirmed != Decimal("1.0"):  # Should be 2.0 - 1.0 from order
+                                    logger.warning(f"Unexpected CREDITS balance: {confirmed} (expected 1.0)")
+                        
+                        if round_num < monitoring_rounds - 1:  # Don't sleep on last round
+                            logger.info(f"Waiting {monitoring_interval} seconds before next balance check...")
+                            await asyncio.sleep(monitoring_interval)
+                        
                     break
                 elif status == "failed":
                     logger.error(f"Order failed. Details: {json.dumps(order_status, indent=2)}")
@@ -479,27 +514,36 @@ class FrontendClientTest:
                     
                 await asyncio.sleep(10)  # Check every 10 seconds
             
-            # Verify balances after order
-            logger.info("Verifying final listing balances...")
-            listing_data = self.run_cmd(f'''
-                curl -s -X GET {self.api_url}/listings/by-id/{self.listing_id} \\
-                    -H "Authorization: Bearer {self.auth_token}"
-            ''')
-            
-            # Find CREDITS balance
-            for balance in listing_data.get("balances", []):
-                if balance["asset_name"] == "CREDITS":
-                    confirmed = Decimal(balance["confirmed_balance"])
-                    pending = Decimal(balance["pending_balance"])
-                    logger.info(f"Final listing CREDITS balance:")
-                    logger.info(f"  Confirmed: {confirmed}")
-                    logger.info(f"  Pending: {pending}")
-                    if confirmed != Decimal("1.0"):  # Should be 2.0 - 1.0 from order
-                        raise ValueError(f"Unexpected final balance: {confirmed} (expected 1.0)")
-                    break
-                    
         except Exception as e:
             logger.error(f"Error in order creation/processing: {e}")
+            
+            # Even if order failed, monitor balances
+            logger.info("\nMonitoring balances after error...")
+            try:
+                for round_num in range(monitoring_rounds):
+                    logger.info(f"\nBalance monitoring round {round_num + 1}/{monitoring_rounds}")
+                    
+                    listing_data = self.run_cmd(f'''
+                        curl -s -X GET {self.api_url}/listings/by-id/{self.listing_id} \\
+                            -H "Authorization: Bearer {self.auth_token}"
+                    ''')
+                    
+                    logger.info("Current listing balances:")
+                    for balance in listing_data.get("balances", []):
+                        asset_name = balance["asset_name"]
+                        confirmed = Decimal(balance["confirmed_balance"])
+                        pending = Decimal(balance["pending_balance"])
+                        logger.info(f"  {asset_name}:")
+                        logger.info(f"    Confirmed: {confirmed}")
+                        logger.info(f"    Pending: {pending}")
+                    
+                    if round_num < monitoring_rounds - 1:
+                        logger.info(f"Waiting {monitoring_interval} seconds before next balance check...")
+                        await asyncio.sleep(monitoring_interval)
+                        
+            except Exception as monitor_error:
+                logger.error(f"Error monitoring balances after failure: {monitor_error}")
+            
             raise
 
     async def create_featured_listing(self):

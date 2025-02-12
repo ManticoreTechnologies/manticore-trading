@@ -55,7 +55,7 @@ async def startup():
 class UvicornServer:
     """Wrapper for running uvicorn with proper lifecycle management."""
     
-    def __init__(self, app_path: str = "api:app", host: str = "0.0.0.0", port: int = 8000):
+    def __init__(self, app_path: str = "api:app", host: str = "10.0.0.2", port: int = 8000):
         self.config = uvicorn.Config(
             app_path,
             host=host,

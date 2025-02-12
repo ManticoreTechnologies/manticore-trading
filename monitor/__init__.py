@@ -70,7 +70,7 @@ class TransactionMonitor:
                     block_time
                 )
                 
-                # Increment confirmations for all previously confirmed transactions
+                # Increment confirmations for all previously confirmed transactions THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     UPDATE transaction_entries 
@@ -81,7 +81,7 @@ class TransactionMonitor:
                     '''
                 )
 
-                # Create balance entries for new assets
+                # Create balance entries for new assets THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     INSERT INTO listing_balances (listing_id, asset_name, confirmed_balance, pending_balance)
@@ -103,7 +103,7 @@ class TransactionMonitor:
                     '''
                 )
 
-                # Update confirmed balances for listings
+                # Update confirmed balances for listings THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     WITH confirmed_txs AS (
@@ -133,7 +133,7 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
-                # Update confirmed balances for orders
+                # Update confirmed balances for orders THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     WITH confirmed_txs AS (
@@ -193,7 +193,7 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
-                # Update cart order status when payment is received
+                # Update cart order status when payment is confirmed
                 await conn.execute(
                     '''
                     UPDATE cart_orders co
@@ -204,11 +204,11 @@ class TransactionMonitor:
                     WHERE co.id = cob.cart_order_id
                     AND cob.asset_name = 'EVR'
                     AND cob.confirmed_balance >= co.required_payment
-                    AND co.status = 'pending'
+                    AND co.status = 'confirming'
                     '''
                 )
 
-                # Update pending balances for listings
+                # Update pending balances for listings THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     WITH pending_txs AS (
@@ -234,7 +234,7 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
-                # Update pending balances for orders
+                # Update pending balances for orders THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     WITH pending_txs AS (
@@ -260,7 +260,7 @@ class TransactionMonitor:
                     self.min_confirmations
                 )
 
-                # Update pending balances for cart orders
+                # Update pending balances for cart orders THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
                     WITH pending_txs AS (
@@ -547,7 +547,7 @@ class TransactionMonitor:
 
                             # Immediately update listing balances for this transaction
                             if entry['entry_type'] == 'receive' and not entry['abandoned']:
-                                # Update or create listing balance entry
+                                # Update or create listing balance entry THIS IS WORKING! DO NOT TOUCH!
                                 await conn.execute(
                                     '''
                                     INSERT INTO listing_balances (
@@ -580,7 +580,7 @@ class TransactionMonitor:
                                     entry['address']
                                 )
 
-                                # Also update order balances if this is a payment address
+                                # Also update order balances if this is a payment address THIS IS WORKING! DO NOT TOUCH!
                                 await conn.execute(
                                     '''
                                     INSERT INTO order_balances (
@@ -644,6 +644,35 @@ class TransactionMonitor:
                                     entry['confirmations'],
                                     self.min_confirmations,
                                     entry['address']
+                                )
+
+                                # Update cart order statuses based on balances
+                                await conn.execute(
+                                    '''
+                                    UPDATE cart_orders co
+                                    SET 
+                                        status = 'confirming',
+                                        updated_at = now()
+                                    FROM cart_order_balances cob
+                                    WHERE co.id = cob.cart_order_id
+                                    AND cob.asset_name = 'EVR'
+                                    AND (cob.confirmed_balance + cob.pending_balance) >= co.required_payment
+                                    AND co.status = 'pending'
+                                    '''
+                                )
+
+                                await conn.execute(
+                                    '''
+                                    UPDATE cart_orders co
+                                    SET 
+                                        status = 'paid',
+                                        updated_at = now()
+                                    FROM cart_order_balances cob
+                                    WHERE co.id = cob.cart_order_id
+                                    AND cob.asset_name = 'EVR'
+                                    AND cob.confirmed_balance >= co.required_payment
+                                    AND co.status = 'confirming'
+                                    '''
                                 )
 
                             # Log transaction processing
