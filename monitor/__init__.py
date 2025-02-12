@@ -106,29 +106,43 @@ class TransactionMonitor:
                 # Update confirmed balances for listings THIS IS WORKING! DO NOT TOUCH!
                 await conn.execute(
                     '''
-                    WITH confirmed_txs AS (
+                    WITH newly_confirmed_txs AS (
                         SELECT 
                             l.id as listing_id,
                             te.asset_name,
-                            SUM(te.amount) as total_amount,
-                            MAX(te.tx_hash) as last_tx_hash,
-                            MAX(te.time) as last_tx_time
+                            te.amount,
+                            te.entry_type,
+                            te.tx_hash,
+                            te.time
                         FROM transaction_entries te
                         JOIN listings l ON l.deposit_address = te.address
-                        WHERE te.entry_type = 'receive' 
-                        AND te.abandoned = false
-                        AND te.confirmations >= $1
-                        GROUP BY l.id, te.asset_name
+                        WHERE te.abandoned = false
+                        AND te.confirmations = $1  -- Only process txs that JUST reached min_confirmations
                     )
                     UPDATE listing_balances lb
                     SET 
-                        confirmed_balance = ct.total_amount,
-                        last_confirmed_tx_hash = ct.last_tx_hash,
-                        last_confirmed_tx_time = ct.last_tx_time,
+                        confirmed_balance = CASE 
+                            WHEN nct.entry_type = 'receive' THEN confirmed_balance + nct.amount
+                            WHEN nct.entry_type = 'send' THEN confirmed_balance - nct.amount
+                            ELSE confirmed_balance
+                        END,
+                        pending_balance = CASE 
+                            WHEN nct.entry_type = 'receive' THEN pending_balance - nct.amount
+                            WHEN nct.entry_type = 'send' THEN pending_balance + nct.amount
+                            ELSE pending_balance
+                        END,
+                        last_confirmed_tx_hash = CASE 
+                            WHEN nct.entry_type = 'receive' THEN nct.tx_hash 
+                            ELSE last_confirmed_tx_hash
+                        END,
+                        last_confirmed_tx_time = CASE 
+                            WHEN nct.entry_type = 'receive' THEN nct.time
+                            ELSE last_confirmed_tx_time
+                        END,
                         updated_at = now()
-                    FROM confirmed_txs ct
-                    WHERE lb.listing_id = ct.listing_id
-                    AND lb.asset_name = ct.asset_name
+                    FROM newly_confirmed_txs nct
+                    WHERE lb.listing_id = nct.listing_id
+                    AND lb.asset_name = nct.asset_name
                     ''', 
                     self.min_confirmations
                 )
@@ -189,7 +203,7 @@ class TransactionMonitor:
                     FROM confirmed_txs ct
                     WHERE cob.cart_order_id = ct.cart_order_id
                     AND cob.asset_name = ct.asset_name
-                    ''', 
+                    ''',
                     self.min_confirmations
                 )
 

@@ -999,6 +999,23 @@ class PayoutManager:
                     )
                     tx_hash = result[0] if isinstance(result, list) else result
                     logger.info(f"Transfer successful: {tx_hash}")
+
+                    # Decrement listing confirmed balance immediately after successful transfer
+                    await conn.execute(
+                        '''
+                        UPDATE listing_balances lb
+                        SET 
+                            confirmed_balance = confirmed_balance - $1,
+                            updated_at = now()
+                        FROM listings l
+                        WHERE l.id = lb.listing_id
+                        AND l.id = $2
+                        AND lb.asset_name = $3
+                        ''',
+                        item['amount'],
+                        item['listing_id'],
+                        item['asset_name']
+                    )
                     
                     # Record outgoing transaction
                     await conn.execute(
@@ -1124,7 +1141,21 @@ class PayoutManager:
                 ''',
                 order_id
             )
-            
+
+            for item in items:
+                print(f"Decrementing listing asset balances for {item['asset_name']}")
+                # decrement listing asset balances from listing_balances table
+                await conn.execute(
+                    '''
+                    UPDATE listing_balances
+                    SET confirmed_balance = confirmed_balance - $1
+                    WHERE listing_id = $2 AND asset_name = $3
+                    ''',
+                    item['amount'],
+                    item['listing_id'],
+                    item['asset_name']
+                )
+
             # Let the blockchain monitor handle balance updates
             # Wait a moment for the transaction to be seen
             await asyncio.sleep(2)
@@ -1208,6 +1239,22 @@ class PayoutManager:
                         
                         successful_transfers.append((item, tx_hash))
                         
+                        # Decrement listing confirmed balance immediately after successful transfer
+                        await conn.execute(
+                            '''
+                            UPDATE listing_balances lb
+                            SET 
+                                confirmed_balance = confirmed_balance - $1,
+                                updated_at = now()
+                            FROM listings l
+                            WHERE l.id = lb.listing_id
+                            AND l.id = $2
+                            AND lb.asset_name = $3
+                            ''',
+                            item['amount'],
+                            item['listing_id'],
+                            item['asset_name']
+                        )
                         # Add seller payment
                         seller_amount = Decimal(str(item['price_evr']))
                         seller_payments[item['seller_address']] = (
